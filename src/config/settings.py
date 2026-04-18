@@ -31,5 +31,12 @@ CHROMA_COLLECTION_NAME = os.getenv("CHROMA_COLLECTION_NAME", "documents")
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1000"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
 
+# Adaptive Chunking settings
+CHUNK_STRATEGY = os.getenv("CHUNK_STRATEGY", "adaptive")  # "adaptive" or "recursive"
+MAX_CHUNK_SIZE = int(os.getenv("MAX_CHUNK_SIZE", "1500"))
+MIN_CHUNK_SIZE = int(os.getenv("MIN_CHUNK_SIZE", "200"))
+CONTEXT_DEPTH = int(os.getenv("CONTEXT_DEPTH", "3"))
+CONTEXT_PREFIX_ENABLED = os.getenv("CONTEXT_PREFIX_ENABLED", "true").lower() == "true"
+
 # Logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

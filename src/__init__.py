@@ -5,11 +5,13 @@ from src.rag import RAGPipeline
 from src.llm import LLMManager
 from src.embeddings import EmbeddingManager
 from src.document_loader import DocumentProcessor
+from src.chunking import AdaptiveChunkingPipeline
 
 __version__ = "1.0.0"
 __all__ = [
     "RAGPipeline",
-    "LLMManager", 
+    "LLMManager",
     "EmbeddingManager",
-    "DocumentProcessor"
+    "DocumentProcessor",
+    "AdaptiveChunkingPipeline",
 ]

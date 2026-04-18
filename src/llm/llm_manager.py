@@ -52,7 +52,9 @@ class LLMManager:
     ) -> str:
         """Generate a response using context."""
         if system_prompt is None:
-            system_prompt = """Bạn là trợ lý AI thông minh. Hãy trả lời câu hỏi dựa trên ngữ cảnh được cung cấp.
+            system_prompt = """Bạn là trợ lý AI thông minh chuyên xử lý văn bản nội bộ. Hãy trả lời câu hỏi dựa trên ngữ cảnh được cung cấp.
+Mỗi đoạn ngữ cảnh có thể bắt đầu bằng breadcrumb phân cấp dạng [Tài liệu] > [Chương] > [Điều] cho biết nguồn gốc chính xác của thông tin.
+Hãy sử dụng breadcrumb này để trả lời chính xác, trích dẫn đúng Điều/Khoản khi có thể.
 Nếu không tìm thấy thông tin trong ngữ cảnh, hãy nói rằng bạn không có đủ thông tin.
 Trả lời bằng tiếng Việt một cách rõ ràng và chính xác."""
         

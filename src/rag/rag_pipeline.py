@@ -73,6 +73,7 @@ class RAGPipeline:
             }
         
         # Build context from retrieved documents
+        # page_content already includes breadcrumb prefix from Context Enricher
         context = "\n\n---\n\n".join([
             doc.page_content for doc in relevant_docs
         ])
@@ -84,12 +85,13 @@ class RAGPipeline:
             system_prompt=system_prompt
         )
         
-        # Extract sources
+        # Extract sources with enriched metadata
         sources = []
         for doc in relevant_docs:
             source_info = {
                 "content": doc.page_content[:200] + "...",
-                "metadata": doc.metadata
+                "metadata": doc.metadata,
+                "breadcrumb": doc.metadata.get("breadcrumb", ""),
             }
             sources.append(source_info)
         
