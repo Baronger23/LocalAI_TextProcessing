@@ -3,9 +3,7 @@ Vector store module using ChromaDB.
 """
 from typing import List, Optional, Dict, Any
 from pathlib import Path
-import chromadb
-from chromadb.config import Settings
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
 from langchain_core.documents import Document
 
 from src.config import CHROMA_PERSIST_DIR, CHROMA_COLLECTION_NAME

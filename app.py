@@ -5,12 +5,13 @@ import streamlit as st
 from pathlib import Path
 import sys
 import time
+import json
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.rag import RAGPipeline
-from src.llm import LLMManager
+from src.storage import ChatStore
 
 
 # Page config
@@ -27,7 +28,7 @@ st.markdown("""
     /* Hide Streamlit branding */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header {visibility: hidden;}
+    header {visibility: visible;}
     
     /* Main background - White like ChatGPT */
     .stApp {
@@ -293,57 +294,277 @@ def init_rag():
 
 
 @st.cache_resource
-def init_llm():
-    """Initialize LLM for direct chat (cached)"""
-    return LLMManager()
+def init_chat_store():
+    """Initialize persistent chat storage and apply retention policy."""
+    store = ChatStore()
+    store.cleanup_old_messages(retention_days=365)
+    return store
+
+
+def build_system_prompt_with_summary(summary: str) -> str:
+    """Build response instruction with persistent rolling summary context."""
+    base_prompt = (
+        "Bạn là trợ lý AI thông minh chuyên xử lý văn bản nội bộ. "
+        "Hãy trả lời dựa trên ngữ cảnh truy xuất được từ tài liệu. "
+        "Nếu thiếu dữ liệu thì nói rõ là chưa đủ thông tin. "
+        "Luôn trả lời tiếng Việt, rõ ràng và chính xác."
+    )
+
+    summary_text = (summary or "").strip()
+    if not summary_text:
+        return base_prompt
+
+    return (
+        f"{base_prompt}\n\n"
+        "Tóm tắt hội thoại trước đó (để giữ mạch trao đổi):\n"
+        f"{summary_text}\n\n"
+        "Dùng tóm tắt này để hiểu ngữ cảnh câu hỏi hiện tại, "
+        "nhưng thông tin factual phải bám tài liệu truy xuất."
+    )
+
+
+def format_user_memories(user_memories: list[dict]) -> str:
+    """Format selected long-term user memories for prompt injection."""
+    if not user_memories:
+        return ""
+
+    lines = []
+    for mem in user_memories[:8]:
+        mem_type = str(mem.get("memory_type", "fact")).strip().lower()
+        content = str(mem.get("content", "")).strip()
+        if not content:
+            continue
+        lines.append(f"- ({mem_type}) {content}")
+
+    return "\n".join(lines)
+
+
+def build_system_prompt(summary: str, user_memories: list[dict]) -> str:
+    """Build final system prompt from rolling summary and selected user memories."""
+    prompt = build_system_prompt_with_summary(summary)
+    memories_text = format_user_memories(user_memories)
+    if not memories_text:
+        return prompt
+
+    return (
+        f"{prompt}\n\n"
+        "Bộ nhớ dài hạn của người dùng (chỉ dùng khi liên quan):\n"
+        f"{memories_text}\n\n"
+        "Các memory này là ngữ cảnh mềm: ưu tiên độ chính xác theo tài liệu truy xuất ở lượt hiện tại."
+    )
+
+
+def update_rolling_summary(rag: RAGPipeline, old_summary: str, recent_messages: list[dict]) -> str:
+    """Update conversation summary from latest turns."""
+    clipped_history = recent_messages[-8:]
+    history_lines = []
+    for msg in clipped_history:
+        role = "User" if msg.get("role") == "user" else "Assistant"
+        content = str(msg.get("content", "")).strip()
+        if content:
+            history_lines.append(f"{role}: {content}")
+
+    history_text = "\n".join(history_lines) if history_lines else "(không có)"
+    prev_summary = (old_summary or "").strip() or "(trống)"
+
+    summarize_prompt = f"""Bạn là bộ máy tóm tắt hội thoại.
+Hãy cập nhật rolling summary ngắn gọn bằng tiếng Việt, tối đa 8 gạch đầu dòng.
+Giữ thông tin còn giá trị cho lượt hỏi tiếp theo: mục tiêu, thuật ngữ, quyết định, ràng buộc.
+Không thêm thông tin không có trong hội thoại.
+
+Summary cũ:
+{prev_summary}
+
+Các tin nhắn gần nhất:
+{history_text}
+
+Trả ra duy nhất phần summary mới, không thêm lời mở đầu."""
+
+    try:
+        new_summary = rag.llm_manager.invoke(summarize_prompt).strip()
+        return new_summary if new_summary else (old_summary or "")
+    except Exception:
+        return old_summary or ""
+
+
+def extract_selected_user_memories(rag: RAGPipeline, recent_messages: list[dict]) -> list[dict]:
+    """Extract stable long-term user memories from recent dialogue."""
+    clipped_history = recent_messages[-12:]
+    history_lines = []
+    for msg in clipped_history:
+        role = "user" if msg.get("role") == "user" else "assistant"
+        content = str(msg.get("content", "")).strip()
+        if content:
+            history_lines.append(f"{role}: {content}")
+
+    if not history_lines:
+        return []
+
+    history_block = "\n".join(history_lines)
+
+    memory_prompt = f"""Bạn là bộ trích xuất user memory dài hạn.
+Từ hội thoại dưới đây, chỉ trích xuất các memory bền vững có ích cho các phiên sau.
+
+Loại memory hợp lệ:
+- preference: sở thích hoặc cách người dùng muốn được trả lời
+- fact: thông tin bền vững về người dùng hoặc bối cảnh làm việc
+- constraint: ràng buộc cố định người dùng yêu cầu
+
+Quy tắc:
+- Chỉ lấy memory rõ ràng, không suy diễn.
+- Không lấy thông tin tạm thời theo 1 câu hỏi ngắn hạn.
+- Trả về JSON array, mỗi phần tử có: memory_type, content, confidence (0..1).
+- Tối đa 3 memory.
+- Nếu không có memory phù hợp, trả về []
+
+Hội thoại:
+{history_block}
+
+Trả về JSON duy nhất:"""
+
+    try:
+        raw = rag.llm_manager.invoke(memory_prompt).strip()
+    except Exception:
+        return []
+
+    if not raw:
+        return []
+
+    cleaned = raw.replace("```json", "").replace("```", "").strip()
+    start = cleaned.find("[")
+    end = cleaned.rfind("]")
+    if start == -1 or end == -1 or end <= start:
+        return []
+
+    json_text = cleaned[start : end + 1]
+    try:
+        parsed = json.loads(json_text)
+    except json.JSONDecodeError:
+        return []
+
+    if not isinstance(parsed, list):
+        return []
+
+    result = []
+    for item in parsed[:5]:
+        if not isinstance(item, dict):
+            continue
+        result.append(
+            {
+                "memory_type": item.get("memory_type", ""),
+                "content": item.get("content", ""),
+                "confidence": item.get("confidence", 0.5),
+            }
+        )
+    return result
 
 
 def main():
+    store = init_chat_store()
+
     # Initialize session state
     if "messages" not in st.session_state:
         st.session_state.messages = []
-    
+
     if "chat_started" not in st.session_state:
         st.session_state.chat_started = False
-    
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
-    
-    if "uploaded_files" not in st.session_state:
-        st.session_state.uploaded_files = []
-    
-    if "show_upload" not in st.session_state:
-        st.session_state.show_upload = False
+
+    if "auth_user_id" not in st.session_state:
+        st.session_state.auth_user_id = None
+
+    if "auth_user_email" not in st.session_state:
+        st.session_state.auth_user_email = ""
+
+    if "current_conversation_id" not in st.session_state:
+        st.session_state.current_conversation_id = None
+
+    if "rolling_summary" not in st.session_state:
+        st.session_state.rolling_summary = ""
+
+    if "user_memories" not in st.session_state:
+        st.session_state.user_memories = []
 
     # Sidebar
     with st.sidebar:
         # Logo and title
         st.markdown("### 🤖 LocalAI Chat")
+
+        if not st.session_state.auth_user_id:
+            auth_mode = st.radio(
+                "Tài khoản",
+                ["Đăng nhập", "Đăng ký"],
+                horizontal=True,
+            )
+
+            if auth_mode == "Đăng nhập":
+                login_email = st.text_input("Email", key="login_email")
+                login_password = st.text_input("Mật khẩu", type="password", key="login_password")
+                if st.button("Đăng nhập", use_container_width=True, type="primary"):
+                    user = store.authenticate_user(login_email, login_password)
+                    if user:
+                        st.session_state.auth_user_id = user["id"]
+                        st.session_state.auth_user_email = user["email"]
+                        st.session_state.messages = []
+                        st.session_state.current_conversation_id = None
+                        st.session_state.chat_started = False
+                        st.session_state.rolling_summary = ""
+                        st.session_state.user_memories = store.list_user_memories(user["id"], limit=12)
+                        st.success("Đăng nhập thành công")
+                        st.rerun()
+                    else:
+                        st.error("Sai email hoặc mật khẩu")
+            else:
+                register_email = st.text_input("Email đăng ký", key="register_email")
+                register_password = st.text_input("Mật khẩu (>= 8 ký tự)", type="password", key="register_password")
+                register_confirm = st.text_input("Nhập lại mật khẩu", type="password", key="register_confirm")
+                if st.button("Tạo tài khoản", use_container_width=True, type="primary"):
+                    if register_password != register_confirm:
+                        st.error("Mật khẩu nhập lại không khớp")
+                    else:
+                        try:
+                            user_id = store.register_user(register_email, register_password)
+                            st.session_state.auth_user_id = user_id
+                            st.session_state.auth_user_email = register_email.strip().lower()
+                            st.session_state.messages = []
+                            st.session_state.current_conversation_id = None
+                            st.session_state.chat_started = False
+                            st.session_state.rolling_summary = ""
+                            st.session_state.user_memories = store.list_user_memories(user_id, limit=12)
+                            st.success("Tạo tài khoản thành công")
+                            st.rerun()
+                        except ValueError as exc:
+                            st.error(str(exc))
+
+            st.markdown("---")
+            st.info("Đăng nhập để xem và lưu lịch sử chat theo từng tài khoản.")
+        else:
+            st.caption(f"Đăng nhập: {st.session_state.auth_user_email}")
+            col_auth_1, col_auth_2 = st.columns(2)
+            with col_auth_1:
+                if st.button("➕ New chat", use_container_width=True, type="primary"):
+                    st.session_state.messages = []
+                    st.session_state.current_conversation_id = None
+                    st.session_state.chat_started = False
+                    st.session_state.rolling_summary = ""
+                    st.rerun()
+            with col_auth_2:
+                if st.button("Đăng xuất", use_container_width=True):
+                    store.log_audit(st.session_state.auth_user_id, "logout", "User logout")
+                    st.session_state.auth_user_id = None
+                    st.session_state.auth_user_email = ""
+                    st.session_state.current_conversation_id = None
+                    st.session_state.messages = []
+                    st.session_state.chat_started = False
+                    st.session_state.rolling_summary = ""
+                    st.session_state.user_memories = []
+                    st.session_state.user_memories = []
+                    st.rerun()
+
+            st.markdown("---")
         
-        # New chat button
-        if st.button("➕  New chat", use_container_width=True, type="primary"):
-            if st.session_state.messages:
-                first_msg = st.session_state.messages[0]["content"][:35] + "..."
-                st.session_state.chat_history.insert(0, {
-                    "title": first_msg,
-                    "messages": st.session_state.messages.copy()
-                })
-            st.session_state.messages = []
-            st.session_state.chat_started = False
-            st.rerun()
-        
-        st.markdown("---")
-        
-        # Mode selection
-        mode = st.radio(
-            "Chế độ",
-            ["💬 Chat", "📚 RAG"],
-            horizontal=True,
-            label_visibility="collapsed"
-        )
-        
-        # RAG document upload
-        if "RAG" in mode:
+            st.markdown("---")
+
+            # RAG document upload
             st.markdown("")
             with st.expander("📁 Upload tài liệu"):
                 uploaded_files = st.file_uploader(
@@ -352,22 +573,22 @@ def main():
                     accept_multiple_files=True,
                     label_visibility="collapsed"
                 )
-                
+
                 if uploaded_files:
                     if st.button("📤 Tải lên", use_container_width=True):
                         with st.spinner("Đang xử lý..."):
                             upload_dir = Path("data/raw")
                             upload_dir.mkdir(parents=True, exist_ok=True)
-                            
+
                             for file in uploaded_files:
                                 file_path = upload_dir / file.name
                                 with open(file_path, "wb") as f:
                                     f.write(file.getbuffer())
-                            
+
                             rag = init_rag()
                             count = rag.load_documents(str(upload_dir))
                             st.success(f"✅ Đã tải {count} chunks!")
-            
+
             # Stats
             try:
                 rag = init_rag()
@@ -375,34 +596,63 @@ def main():
                 st.markdown(f"""
                 <span class="model-badge">📄 {stats['vector_store']['count']} documents</span>
                 """, unsafe_allow_html=True)
-            except:
+            except Exception:
                 pass
-        
-        # Chat history
-        if st.session_state.chat_history:
+
+            # Chat history (tenant-isolated)
             st.markdown("---")
             st.markdown('<p class="sidebar-header">Lịch sử chat</p>', unsafe_allow_html=True)
-            
-            for i, chat in enumerate(st.session_state.chat_history[:8]):
-                if st.button(f"💬 {chat['title']}", key=f"hist_{i}", use_container_width=True):
-                    st.session_state.messages = chat["messages"].copy()
-                    st.session_state.chat_started = True
+            conversations = store.list_conversations(st.session_state.auth_user_id, limit=20)
+            st.session_state.user_memories = store.list_user_memories(
+                st.session_state.auth_user_id,
+                limit=12,
+            )
+            if not conversations:
+                st.caption("Chưa có cuộc chat nào")
+            for conv in conversations:
+                conv_title = conv["title"]
+                if st.button(f"💬 {conv_title}", key=f"conv_{conv['id']}", use_container_width=True):
+                    st.session_state.current_conversation_id = conv["id"]
+                    st.session_state.messages = store.get_messages(
+                        st.session_state.auth_user_id,
+                        conv["id"],
+                    )
+                    st.session_state.rolling_summary = store.get_conversation_summary(
+                        st.session_state.auth_user_id,
+                        conv["id"],
+                    )
+                    st.session_state.chat_started = bool(st.session_state.messages)
                     st.rerun()
-        
-        # Footer
-        st.markdown("---")
-        col1, col2 = st.columns([1, 5])
-        with col1:
-            st.markdown("👤")
-        with col2:
-            st.markdown("**Local User**")
-            st.caption("Qwen 2.5 • Nomic Embed")
+
+            with st.expander("🧠 User memories", expanded=False):
+                if not st.session_state.user_memories:
+                    st.caption("Chưa có memory dài hạn")
+                else:
+                    for memory in st.session_state.user_memories[:8]:
+                        mem_type = memory.get("memory_type", "fact")
+                        conf = float(memory.get("confidence", 0.5))
+                        content = memory.get("content", "")
+                        st.caption(f"• ({mem_type}, {conf:.2f}) {content}")
+
+            # Footer
+            st.markdown("---")
+            col1, col2 = st.columns([1, 5])
+            with col1:
+                st.markdown("👤")
+            with col2:
+                st.markdown("**Local User**")
+                st.caption("Qwen 2.5 • Nomic Embed")
 
     # Main content area
+    if not st.session_state.auth_user_id:
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        st.info("Vui lòng đăng nhập hoặc đăng ký để bắt đầu chat và lưu lịch sử.")
+        return
+
     if not st.session_state.chat_started and not st.session_state.messages:
         # Welcome screen
         st.markdown("<br><br><br>", unsafe_allow_html=True)
-        
+
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             st.markdown("""
@@ -425,152 +675,53 @@ def main():
                 if message.get("sources"):
                     with st.expander("📚 Nguồn tham khảo"):
                         for i, source in enumerate(message["sources"], 1):
-                            st.caption(f"**Nguồn {i}:** {source['content'][:150]}...")
+                            breadcrumb = source.get("breadcrumb") or source.get("metadata", {}).get("breadcrumb", "")
+                            source_file = source.get("metadata", {}).get("source", "Không rõ")
+                            if breadcrumb:
+                                st.caption(f"**Nguồn {i}:** {breadcrumb}")
+                            st.caption(f"Tài liệu: {source_file}")
+                            st.caption(source["content"][:180] + "...")
 
-    # Custom chat input with file upload - Plus button integrated
-    
-    # Show file upload popup when toggled
-    if st.session_state.show_upload:
-        st.markdown("""
-        <div class="upload-area">
-            <p style="margin: 0; color: #10a37f; font-size: 16px;">📁 Kéo thả file vào đây hoặc click để chọn</p>
-            <p style="margin: 8px 0 0 0; color: #888; font-size: 13px;">Hỗ trợ: PDF, TXT, DOCX</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        chat_files = st.file_uploader(
-            "Upload",
-            type=["pdf", "txt", "docx"],
-            accept_multiple_files=True,
-            key="chat_uploader",
-            label_visibility="collapsed"
-        )
-        
-        if chat_files:
-            # Show uploaded files as chips
-            file_cols = st.columns(len(chat_files) if len(chat_files) <= 4 else 4)
-            for i, f in enumerate(chat_files):
-                with file_cols[i % 4]:
-                    st.markdown(f'<span class="file-chip">📎 {f.name}</span>', unsafe_allow_html=True)
-            
-            col1, col2 = st.columns([1, 1])
-            with col1:
-                if st.button("✅ Xác nhận upload", use_container_width=True, type="primary"):
-                    # Save files and load to RAG
-                    upload_dir = Path("data/raw")
-                    upload_dir.mkdir(parents=True, exist_ok=True)
-                    
-                    file_names = []
-                    for file in chat_files:
-                        file_path = upload_dir / file.name
-                        with open(file_path, "wb") as f:
-                            f.write(file.getbuffer())
-                        file_names.append(file.name)
-                    
-                    # Load to RAG
-                    rag = init_rag()
-                    count = rag.load_documents(str(upload_dir))
-                    
-                    st.session_state.uploaded_files = file_names
-                    st.session_state.show_upload = False
-                    st.success(f"✅ Đã tải {len(file_names)} file ({count} chunks)")
-                    st.rerun()
-            
-            with col2:
-                if st.button("❌ Hủy", use_container_width=True):
-                    st.session_state.show_upload = False
-                    st.rerun()
-    
-    # Show currently attached files
-    if st.session_state.uploaded_files:
-        st.markdown("**📎 Files đã đính kèm:**")
-        for fname in st.session_state.uploaded_files:
-            st.markdown(f'<span class="file-chip">📎 {fname}</span>', unsafe_allow_html=True)
-    
-    # Plus button - positioned next to chat input using CSS
-    st.markdown("""
-    <style>
-    /* Position the button container at bottom left of input */
-    .element-container:has(#plus-btn-anchor) {
-        position: fixed !important;
-        bottom: 17px !important;
-        left: calc(50% - 370px) !important;
-        z-index: 10000 !important;
-        width: auto !important;
-    }
-    
-    @media (max-width: 850px) {
-        .element-container:has(#plus-btn-anchor) {
-            left: 28px !important;
-        }
-    }
-    
-    /* Style the button */
-    .element-container:has(#plus-btn-anchor) button {
-        width: 42px !important;
-        height: 42px !important;
-        min-width: 42px !important;
-        padding: 0 !important;
-        border-radius: 50% !important;
-        border: 1px solid #e0e0e0 !important;
-        background-color: #fff !important;
-        font-size: 20px !important;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.1) !important;
-    }
-    
-    .element-container:has(#plus-btn-anchor) button:hover {
-        background-color: #f5f5f5 !important;
-        border-color: #10a37f !important;
-    }
-    
-    /* Chat input - add left padding for button */
-    .stChatInput textarea,
-    .stChatInput [data-baseweb="textarea"] textarea {
-        padding-left: 56px !important;
-    }
-    </style>
-    <span id="plus-btn-anchor"></span>
-    """, unsafe_allow_html=True)
-    
-    if st.button("➕", key="plus_btn", help="Đính kèm file"):
-        st.session_state.show_upload = not st.session_state.show_upload
-        st.rerun()
-    
     # Chat input
     if prompt := st.chat_input("Nhập tin nhắn..."):
         st.session_state.chat_started = True
-        
-        # Include attached files in message
-        attached_files = st.session_state.uploaded_files.copy() if st.session_state.uploaded_files else None
+
+        if not st.session_state.current_conversation_id:
+            conversation_title = (prompt.strip()[:50] + "...") if len(prompt.strip()) > 50 else prompt.strip()
+            st.session_state.current_conversation_id = store.create_conversation(
+                st.session_state.auth_user_id,
+                conversation_title or "Chat mới",
+            )
+            st.session_state.rolling_summary = ""
+
+        store.append_message(
+            user_id=st.session_state.auth_user_id,
+            conversation_id=st.session_state.current_conversation_id,
+            role="user",
+            content=prompt,
+            sources=None,
+        )
         
         st.session_state.messages.append({
             "role": "user", 
-            "content": prompt,
-            "files": attached_files
+            "content": prompt
         })
         
         with st.chat_message("user", avatar="👤"):
-            if attached_files:
-                for fname in attached_files:
-                    st.markdown(f'<span class="file-chip">📎 {fname}</span>', unsafe_allow_html=True)
             st.markdown(prompt)
 
         with st.chat_message("assistant", avatar="🤖"):
             message_placeholder = st.empty()
             
             try:
-                # Use RAG mode if files attached or RAG selected
-                use_rag = "RAG" in mode or st.session_state.uploaded_files
-                
-                if use_rag:
-                    rag = init_rag()
-                    result = rag.query(prompt)
-                    response = result["answer"]
-                    sources = result.get("sources", [])
-                else:
-                    llm = init_llm()
-                    response = llm.invoke(prompt)
-                    sources = []
+                rag = init_rag()
+                system_prompt = build_system_prompt(
+                    summary=st.session_state.rolling_summary,
+                    user_memories=st.session_state.user_memories,
+                )
+                result = rag.query(prompt, system_prompt=system_prompt)
+                response = result["answer"]
+                sources = result.get("sources", [])
                 
                 # Typing effect
                 displayed_text = ""
@@ -583,16 +734,52 @@ def main():
                 if sources:
                     with st.expander("📚 Nguồn tham khảo"):
                         for i, source in enumerate(sources, 1):
-                            st.caption(f"**Nguồn {i}:** {source['content'][:150]}...")
+                            breadcrumb = source.get("breadcrumb") or source.get("metadata", {}).get("breadcrumb", "")
+                            source_file = source.get("metadata", {}).get("source", "Không rõ")
+                            if breadcrumb:
+                                st.caption(f"**Nguồn {i}:** {breadcrumb}")
+                            st.caption(f"Tài liệu: {source_file}")
+                            st.caption(source["content"][:180] + "...")
                 
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": response,
                     "sources": sources if sources else None
                 })
-                
-                # Clear attached files after sending
-                st.session_state.uploaded_files = []
+                store.append_message(
+                    user_id=st.session_state.auth_user_id,
+                    conversation_id=st.session_state.current_conversation_id,
+                    role="assistant",
+                    content=response,
+                    sources=sources if sources else None,
+                )
+                st.session_state.rolling_summary = update_rolling_summary(
+                    rag=rag,
+                    old_summary=st.session_state.rolling_summary,
+                    recent_messages=st.session_state.messages,
+                )
+                store.upsert_conversation_summary(
+                    user_id=st.session_state.auth_user_id,
+                    conversation_id=st.session_state.current_conversation_id,
+                    summary=st.session_state.rolling_summary,
+                    last_message_id=None,
+                )
+
+                extracted_memories = extract_selected_user_memories(
+                    rag=rag,
+                    recent_messages=st.session_state.messages,
+                )
+                if extracted_memories:
+                    store.upsert_user_memories(
+                        user_id=st.session_state.auth_user_id,
+                        memories=extracted_memories,
+                        min_confidence=0.7,
+                        max_memories=50,
+                    )
+                    st.session_state.user_memories = store.list_user_memories(
+                        st.session_state.auth_user_id,
+                        limit=12,
+                    )
                     
             except Exception as e:
                 error_msg = f"❌ Lỗi: {str(e)}"
@@ -601,6 +788,13 @@ def main():
                     "role": "assistant",
                     "content": error_msg
                 })
+                store.append_message(
+                    user_id=st.session_state.auth_user_id,
+                    conversation_id=st.session_state.current_conversation_id,
+                    role="assistant",
+                    content=error_msg,
+                    sources=None,
+                )
 
 
 if __name__ == "__main__":
