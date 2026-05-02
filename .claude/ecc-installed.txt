@@ -1,0 +1,3 @@
+﻿repo=https://github.com/affaan-m/everything-claude-code.git
+sha=4e66b28
+installed_at_utc=2026-04-27T11:49:22.4471324Z

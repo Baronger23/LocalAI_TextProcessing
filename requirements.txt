@@ -7,6 +7,7 @@ langchain-text-splitters>=0.3.0
 
 # Vector Database
 chromadb>=1.0.0
+pgvector>=0.3.6
 
 # Ollama Client
 ollama>=0.4.0
@@ -24,6 +25,7 @@ pandas>=2.0.0
 python-dotenv>=1.0.0
 tqdm>=4.65.0
 rich>=13.0.0
+psycopg[binary]>=3.2.10
 
 # Testing
 pytest>=8.0.0

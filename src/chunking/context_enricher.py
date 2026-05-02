@@ -8,6 +8,7 @@ Example output prefix:
 from typing import List, Dict, Any
 
 from langchain_core.documents import Document
+from langchain_community.vectorstores.utils import filter_complex_metadata
 
 from src.chunking.vietnamese_chunker import (
     DocumentSection,
@@ -87,16 +88,25 @@ class ContextEnricher:
         breadcrumb: str,
         source_metadata: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Build metadata dict for a LangChain Document."""
+        """Build metadata dict for a LangChain Document.
+        
+        Filters complex types (lists, dicts) from source_metadata to comply with ChromaDB.
+        """
+        # Filter complex metadata types that ChromaDB doesn't accept
+        temp_doc = Document(page_content="", metadata=source_metadata)
+        filtered_docs = filter_complex_metadata([temp_doc])
+        filtered_source = filtered_docs[0].metadata
+        
+        # Build metadata with enricher's breadcrumb taking priority
         meta: Dict[str, Any] = {
-            **source_metadata,
+            **filtered_source,
             "section_level": section.level.name,
             "section_title": section.title,
-            "breadcrumb": breadcrumb,
+            "breadcrumb": breadcrumb,  # Always string from _build_breadcrumb()
         }
 
-        # Add full hierarchy path as list
-        meta["hierarchy_path"] = section.breadcrumb()
+        # Add full hierarchy path as string (ChromaDB requires str, not list)
+        meta["hierarchy_path"] = self.separator.join(section.breadcrumb())
 
         return meta
 

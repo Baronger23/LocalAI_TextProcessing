@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  postgres:
+    # Sử dụng image chính thức từ pgvector, đã tích hợp sẵn PostgreSQL 16 và extension pgvector
+    image: pgvector/pgvector:pg16
+    container_name: secure_docs_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: secure_docs_ai
+    ports:
+      - "5432:5432"
+    volumes:
+      # Ánh xạ thư mục chứa file schema.sql vào thư mục khởi tạo của PostgreSQL.
+      # Khi container chạy lần đầu tiên, nó sẽ tự động chạy file schema.sql này để tạo bảng và index.
+      - ./database/postgres/schema.sql:/docker-entrypoint-initdb.d/init.sql
+      # Volume để lưu trữ dữ liệu bền vững (tránh mất dữ liệu khi xóa container)
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d secure_docs_ai"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

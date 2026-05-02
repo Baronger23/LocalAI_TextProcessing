@@ -30,7 +30,8 @@ class LLMManager:
             self._llm = OllamaLLM(
                 model=self.model,
                 base_url=self.base_url,
-                temperature=self.temperature
+                temperature=self.temperature,
+                keep_alive=0  # Unload from VRAM after use to avoid conflict with embedding model
             )
         return self._llm
     

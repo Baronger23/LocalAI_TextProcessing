@@ -587,6 +587,7 @@ def main():
 
                             rag = init_rag()
                             count = rag.load_documents(str(upload_dir))
+                            print(f"[INGESTION_DEBUG] Final result: {count} chunks loaded")
                             st.success(f"✅ Đã tải {count} chunks!")
 
             # Stats
