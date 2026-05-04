@@ -116,8 +116,16 @@ class RAGPipeline:
         question: str,
         k: int = 4,
         system_prompt: Optional[str] = None,
+        chat_history: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Query the RAG system with optional Query Rewriting and MMR.
+
+        Args:
+            question: The user's current question.
+            k: Number of documents to retrieve.
+            system_prompt: Optional system instruction for the LLM.
+            chat_history: Recent conversation turns for context resolution
+                          (e.g. resolving "ngày đó", "ông ấy", etc.).
 
         Returns a dict with keys: answer, sources, context, rewritten_query.
         """
@@ -166,6 +174,7 @@ class RAGPipeline:
             query=search_query,   # Use rewritten query so LLM knows expanded terms
             context=context,
             system_prompt=system_prompt,
+            chat_history=chat_history,
         )
 
         # Step 5 — Build sources metadata

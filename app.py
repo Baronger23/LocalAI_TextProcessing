@@ -296,9 +296,7 @@ def init_rag():
 @st.cache_resource
 def init_chat_store():
     """Initialize persistent chat storage and apply retention policy."""
-    store = ChatStore()
-    store.cleanup_old_messages(retention_days=365)
-    return store
+    return ChatStore()
 
 
 def build_system_prompt_with_summary(summary: str) -> str:
@@ -720,7 +718,11 @@ def main():
                     summary=st.session_state.rolling_summary,
                     user_memories=st.session_state.user_memories,
                 )
-                result = rag.query(prompt, system_prompt=system_prompt)
+                result = rag.query(
+                    prompt,
+                    system_prompt=system_prompt,
+                    chat_history=st.session_state.messages[:-1],  # exclude current user msg
+                )
                 response = result["answer"]
                 sources = result.get("sources", [])
                 
@@ -798,5 +800,8 @@ def main():
                 )
 
 
+# Call main() when Streamlit runs the app
+main()
+
 if __name__ == "__main__":
-    main()
+    pass  # main() already called above

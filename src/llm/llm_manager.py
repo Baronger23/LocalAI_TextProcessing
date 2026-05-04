@@ -49,24 +49,45 @@ class LLMManager:
         self,
         query: str,
         context: str,
-        system_prompt: Optional[str] = None
+        system_prompt: Optional[str] = None,
+        chat_history: Optional[List[Dict[str, str]]] = None,
     ) -> str:
-        """Generate a response using context."""
+        """Generate a response using context and optional chat history.
+
+        Args:
+            query: The current user question.
+            context: Retrieved document context.
+            system_prompt: Optional system instruction override.
+            chat_history: List of recent messages [{"role": "user"|"assistant", "content": "..."}].
+                          Used so the LLM can resolve references like "ngày đó", "ông ấy", etc.
+        """
         if system_prompt is None:
             system_prompt = """Bạn là trợ lý AI thông minh chuyên xử lý văn bản nội bộ. Hãy trả lời câu hỏi dựa trên ngữ cảnh được cung cấp.
 Mỗi đoạn ngữ cảnh có thể bắt đầu bằng breadcrumb phân cấp dạng [Tài liệu] > [Chương] > [Điều] cho biết nguồn gốc chính xác của thông tin.
 Hãy sử dụng breadcrumb này để trả lời chính xác, trích dẫn đúng Điều/Khoản khi có thể.
 Nếu không tìm thấy thông tin trong ngữ cảnh, hãy nói rằng bạn không có đủ thông tin.
 Trả lời bằng tiếng Việt một cách rõ ràng và chính xác."""
-        
+
+        # Build chat history block (last N turns, excluding current question)
+        history_block = ""
+        if chat_history:
+            lines = []
+            for msg in chat_history[-6:]:  # keep last 6 messages (~3 turns)
+                role = "Người dùng" if msg.get("role") == "user" else "Trợ lý"
+                content = str(msg.get("content", "")).strip()
+                if content:
+                    lines.append(f"{role}: {content}")
+            if lines:
+                history_block = "Lịch sử hội thoại gần nhất:\n" + "\n".join(lines) + "\n\n"
+
         prompt_template = f"""{system_prompt}
 
-Ngữ cảnh:
+Ngữ cảnh tài liệu:
 {{context}}
 
-Câu hỏi: {{query}}
+{history_block}Câu hỏi hiện tại: {{query}}
 
 Trả lời:"""
-        
+
         chain = self.create_chain(prompt_template)
         return chain.invoke({"context": context, "query": query})
