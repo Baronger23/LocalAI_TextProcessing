@@ -1,28 +1,144 @@
 """
 LLM module using Ollama.
+
+Enhancements over the original:
+  - Configurable keep_alive (default 300 s) — avoids VRAM reload on every call.
+  - Threading Semaphore — limits concurrent Ollama calls to prevent GPU thrash.
+  - FIFO queue with max_queue_size — rejects requests when queue is full.
+  - Token streaming via stream() generator.
+  - Prompt-Fusion via generate_response_fused() — rewrite + generate in 1 LLM call.
 """
-from typing import Optional, List, Dict, Any
+from __future__ import annotations
+
+import logging
+import threading
+import time
+from typing import Any, Dict, Generator, List, Optional
+
 from langchain_ollama import OllamaLLM
-from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
-from src.config import OLLAMA_BASE_URL, LLM_MODEL, LLM_TEMPERATURE
+from src.config import (
+    OLLAMA_BASE_URL,
+    LLM_MODEL,
+    LLM_TEMPERATURE,
+    OLLAMA_KEEP_ALIVE,
+    LLM_MAX_CONCURRENT_CALLS,
+    LLM_MAX_QUEUE_SIZE,
+)
+from src.rag.exceptions import LLMQueueFullError, LLMTimeoutError
+from src.rag.models import FusedLLMResponse
+
+logger = logging.getLogger(__name__)
+
+# How long (seconds) a request may wait in the semaphore queue before timing out.
+_SEMAPHORE_TIMEOUT_S = 120
+
+
+def _validate_and_clean_answer(raw: str, query: str) -> str:
+    """Validate and clean the LLM answer.
+
+    - Strips JSON artifacts and code fences.
+    - Rejects answers that are too short (< 30 chars) or look like bare
+      breadcrumbs / table-of-contents entries.
+    - Returns a fallback message when the answer is unusable.
+    """
+    if not raw:
+        return "Không tìm thấy thông tin liên quan trong tài liệu."
+
+    text = raw.strip()
+
+    # Strip markdown code fences
+    if text.startswith("```"):
+        lines = text.splitlines()
+        text = "\n".join(lines[1:-1]).strip()
+
+    # Strip JSON artifacts — if the whole answer looks like JSON, extract text
+    if text.startswith("{") and '"answer"' in text:
+        import re
+        m = re.search(r'"answer"\s*:\s*"((?:[^"\\]|\\.)+)"', text, re.DOTALL)
+        if m:
+            text = m.group(1).strip()
+        else:
+            text = ""
+
+    if not text or len(text) < 30:
+        logger.warning(
+            "[llm] Answer too short or empty after cleanup (%d chars) for query: %r",
+            len(text), query[:60],
+        )
+        return "Không tìm thấy thông tin liên quan trong tài liệu."
+
+    return text
+
+# Fused prompt template — instructs the LLM to expand abbreviations AND answer
+# in a single inference pass, returning structured JSON.
+_FUSED_SYSTEM_PROMPT = """Bạn là trợ lý học thuật về Quan hệ Quốc tế.
+
+NHIỆM VỤ:
+Trả lời câu hỏi dựa trên tài liệu, tập trung vào phân tích trong lĩnh vực Quan hệ Quốc tế (QHQT).
+Nếu câu hỏi chứa từ viết tắt tiếng Việt, hãy mở rộng chúng trong trường "rewritten_query".
+
+QUY TẮC BẮT BUỘC:
+1. PHẢI trả lời trong bối cảnh Quan hệ Quốc tế (QHQT)
+2. KHÔNG được chỉ trả lời về nguồn gốc xã hội học/tâm lý học nếu câu hỏi liên quan đến QHQT
+3. Nếu context có nhiều phần, PHẢI chọn phần liên quan trực tiếp đến QHQT
+4. Nếu chỉ có thông tin nền tảng (ví dụ Cooley, Mead, Linton), PHẢI nói rõ đây chỉ là nền tảng và KHÔNG đủ để trả lời đầy đủ trong QHQT
+5. Câu trả lời phải có nội dung phân tích, không chỉ liệt kê tên công trình
+6. Trường "answer" phải là câu trả lời HOÀN CHỈNH — KHÔNG chỉ là breadcrumb hay số hiệu chương/điều
+
+KIỂM TRA CUỐI:
+- Nếu câu trả lời chỉ nói về nguồn gốc khái niệm mà không liên hệ QHQT → KHÔNG hợp lệ → phải viết lại
+
+Trả về DUY NHẤT một JSON object (không thêm văn bản nào khác):
+{
+  "answer": "<câu trả lời hoàn chỉnh bằng tiếng Việt, có phân tích trong bối cảnh QHQT>",
+  "rewritten_query": "<câu hỏi đã mở rộng từ viết tắt hoặc null>",
+  "confidence": <số thực 0.0–1.0>
+}"""
 
 
 class LLMManager:
-    """Manage LLM interactions using Ollama."""
-    
+    """Manage LLM interactions using Ollama with concurrency control."""
+
     def __init__(
         self,
         model: str = LLM_MODEL,
         base_url: str = OLLAMA_BASE_URL,
-        temperature: float = LLM_TEMPERATURE
+        temperature: float = LLM_TEMPERATURE,
+        keep_alive: int = OLLAMA_KEEP_ALIVE,
+        max_concurrent_calls: int = LLM_MAX_CONCURRENT_CALLS,
+        max_queue_size: int = LLM_MAX_QUEUE_SIZE,
     ):
         self.model = model
         self.base_url = base_url
         self.temperature = temperature
-        self._llm = None
-    
+        self.keep_alive = keep_alive
+
+        # Validate and clamp concurrency settings
+        if max_concurrent_calls < 1:
+            logger.warning(
+                "LLM_MAX_CONCURRENT_CALLS=%d is invalid — using default 2.",
+                max_concurrent_calls,
+            )
+            max_concurrent_calls = 2
+        self.max_concurrent_calls = max_concurrent_calls
+        self.max_queue_size = max(1, max_queue_size)
+
+        self._llm: Optional[OllamaLLM] = None
+
+        # Semaphore limits simultaneous Ollama calls.
+        self._semaphore = threading.Semaphore(self.max_concurrent_calls)
+
+        # Queue tracking (FIFO discipline enforced by Semaphore + lock ordering).
+        self._queue_lock = threading.Lock()
+        self._queue_count: int = 0  # requests waiting for the semaphore
+
+    # ------------------------------------------------------------------
+    # LLM instance (lazy init)
+    # ------------------------------------------------------------------
+
     @property
     def llm(self) -> OllamaLLM:
         """Get or create LLM instance."""
@@ -31,20 +147,112 @@ class LLMManager:
                 model=self.model,
                 base_url=self.base_url,
                 temperature=self.temperature,
-                keep_alive=0  # Unload from VRAM after use to avoid conflict with embedding model
+                keep_alive=self.keep_alive,
             )
         return self._llm
-    
+
+    # ------------------------------------------------------------------
+    # Semaphore helpers
+    # ------------------------------------------------------------------
+
+    def _acquire(self) -> float:
+        """Acquire the semaphore, respecting queue size limits.
+
+        Returns:
+            queue_wait_ms — time spent waiting in the queue (milliseconds).
+
+        Raises:
+            LLMQueueFullError: if the queue is already at max_queue_size.
+            LLMTimeoutError:   if the semaphore is not acquired within 120 s.
+        """
+        with self._queue_lock:
+            if self._queue_count >= self.max_queue_size:
+                raise LLMQueueFullError(
+                    f"LLM semaphore queue is full ({self.max_queue_size} requests waiting). "
+                    "Please retry later."
+                )
+            self._queue_count += 1
+
+        wait_start = time.perf_counter()
+        acquired = self._semaphore.acquire(timeout=_SEMAPHORE_TIMEOUT_S)
+        queue_wait_ms = (time.perf_counter() - wait_start) * 1_000.0
+
+        with self._queue_lock:
+            self._queue_count -= 1
+
+        if not acquired:
+            raise LLMTimeoutError(
+                f"LLM call timed out after waiting {queue_wait_ms:.0f} ms "
+                f"(limit: {_SEMAPHORE_TIMEOUT_S * 1000:.0f} ms)."
+            )
+
+        return queue_wait_ms
+
+    def _release(self) -> None:
+        """Release the semaphore slot."""
+        self._semaphore.release()
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
     def invoke(self, prompt: str) -> str:
-        """Send a prompt to the LLM and get response."""
-        return self.llm.invoke(prompt)
-    
+        """Send a prompt to the LLM and return the full response string.
+
+        Acquires the semaphore before calling Ollama and always releases it
+        afterwards (even on exception).
+
+        Returns:
+            The LLM response as a plain string.
+
+        Raises:
+            LLMQueueFullError: queue is full.
+            LLMTimeoutError:   waited too long for a semaphore slot.
+        """
+        queue_wait_ms = self._acquire()
+        logger.debug("[llm] invoke — queue_wait=%.1f ms", queue_wait_ms)
+        try:
+            return self.llm.invoke(prompt)
+        except Exception:
+            logger.exception("[llm] invoke failed")
+            raise
+        finally:
+            self._release()
+
+    def stream(self, prompt: str) -> Generator[str, None, None]:
+        """Stream tokens from the LLM one at a time.
+
+        Acquires the semaphore before the first token and releases it after
+        the last token (or on error).
+
+        Yields:
+            Individual token strings as they arrive from Ollama.
+
+        Raises:
+            LLMQueueFullError: queue is full.
+            LLMTimeoutError:   waited too long for a semaphore slot.
+        """
+        queue_wait_ms = self._acquire()
+        logger.debug("[llm] stream — queue_wait=%.1f ms", queue_wait_ms)
+        try:
+            for token in self.llm.stream(prompt):
+                yield token
+        except Exception:
+            logger.exception("[llm] stream interrupted")
+            # Yield nothing more — caller receives whatever was streamed so far.
+        finally:
+            self._release()
+
     def create_chain(self, prompt_template: str):
-        """Create a chain with a prompt template."""
+        """Create a LangChain chain with a prompt template (non-streaming)."""
         prompt = PromptTemplate.from_template(prompt_template)
         chain = prompt | self.llm | StrOutputParser()
         return chain
-    
+
+    # ------------------------------------------------------------------
+    # Standard (non-fused) generation
+    # ------------------------------------------------------------------
+
     def generate_response(
         self,
         query: str,
@@ -54,25 +262,42 @@ class LLMManager:
     ) -> str:
         """Generate a response using context and optional chat history.
 
+        This is the original two-call flow (kept for backward compatibility
+        and when PROMPT_FUSION_ENABLED=false).
+
         Args:
-            query: The current user question.
-            context: Retrieved document context.
+            query:        The current user question.
+            context:      Retrieved document context.
             system_prompt: Optional system instruction override.
-            chat_history: List of recent messages [{"role": "user"|"assistant", "content": "..."}].
-                          Used so the LLM can resolve references like "ngày đó", "ông ấy", etc.
+            chat_history: Recent messages for context resolution.
+
+        Returns:
+            The LLM answer as a plain string.
         """
         if system_prompt is None:
-            system_prompt = """Bạn là trợ lý AI thông minh chuyên xử lý văn bản nội bộ. Hãy trả lời câu hỏi dựa trên ngữ cảnh được cung cấp.
-Mỗi đoạn ngữ cảnh có thể bắt đầu bằng breadcrumb phân cấp dạng [Tài liệu] > [Chương] > [Điều] cho biết nguồn gốc chính xác của thông tin.
-Hãy sử dụng breadcrumb này để trả lời chính xác, trích dẫn đúng Điều/Khoản khi có thể.
-Nếu không tìm thấy thông tin trong ngữ cảnh, hãy nói rằng bạn không có đủ thông tin.
-Trả lời bằng tiếng Việt một cách rõ ràng và chính xác."""
+            system_prompt = (
+                "Bạn là trợ lý học thuật về Quan hệ Quốc tế.\n\n"
+                "NHIỆM VỤ:\n"
+                "Trả lời câu hỏi dựa trên tài liệu, tập trung vào phân tích trong lĩnh vực "
+                "Quan hệ Quốc tế (QHQT).\n\n"
+                "QUY TẮC BẮT BUỘC:\n"
+                "1. PHẢI trả lời trong bối cảnh Quan hệ Quốc tế (QHQT)\n"
+                "2. KHÔNG được chỉ trả lời về nguồn gốc xã hội học/tâm lý học nếu câu hỏi "
+                "liên quan đến QHQT\n"
+                "3. Nếu context có nhiều phần, PHẢI chọn phần liên quan trực tiếp đến QHQT\n"
+                "4. Nếu chỉ có thông tin nền tảng (ví dụ Cooley, Mead, Linton), PHẢI nói rõ "
+                "đây chỉ là nền tảng và KHÔNG đủ để trả lời đầy đủ trong QHQT\n"
+                "5. Câu trả lời phải có nội dung phân tích, không chỉ liệt kê tên công trình\n\n"
+                "KIỂM TRA CUỐI:\n"
+                "- Nếu câu trả lời chỉ nói về nguồn gốc khái niệm mà không liên hệ QHQT "
+                "→ KHÔNG hợp lệ → phải viết lại\n\n"
+                "Trả lời bằng tiếng Việt."
+            )
 
-        # Build chat history block (last N turns, excluding current question)
         history_block = ""
         if chat_history:
             lines = []
-            for msg in chat_history[-6:]:  # keep last 6 messages (~3 turns)
+            for msg in chat_history[-6:]:
                 role = "Người dùng" if msg.get("role") == "user" else "Trợ lý"
                 content = str(msg.get("content", "")).strip()
                 if content:
@@ -80,14 +305,122 @@ Trả lời bằng tiếng Việt một cách rõ ràng và chính xác."""
             if lines:
                 history_block = "Lịch sử hội thoại gần nhất:\n" + "\n".join(lines) + "\n\n"
 
-        prompt_template = f"""{system_prompt}
-
-Ngữ cảnh tài liệu:
-{{context}}
-
-{history_block}Câu hỏi hiện tại: {{query}}
-
-Trả lời:"""
+        prompt_template = (
+            f"{system_prompt}\n\n"
+            "Ngữ cảnh tài liệu:\n{context}\n\n"
+            f"{history_block}"
+            "Câu hỏi: {query}\n\n"
+            "Trả lời:"
+        )
 
         chain = self.create_chain(prompt_template)
-        return chain.invoke({"context": context, "query": query})
+        raw_result = chain.invoke({"context": context, "query": query})
+        return _validate_and_clean_answer(raw_result, query)
+
+    # ------------------------------------------------------------------
+    # Fused generation (rewrite + answer in 1 LLM call)
+    # ------------------------------------------------------------------
+
+    def generate_response_fused(
+        self,
+        query: str,
+        context: str,
+        system_prompt: Optional[str] = None,
+        chat_history: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """Fused generation: expand abbreviations AND answer in a single LLM call.
+
+        The LLM is instructed to return a JSON object with keys:
+        ``answer``, ``rewritten_query``, ``confidence``.
+
+        If the LLM output cannot be parsed as valid JSON, the raw text is used
+        as the answer (fallback) and a WARNING is logged.
+
+        Args:
+            query:        The current user question (may contain abbreviations).
+            context:      Retrieved document context.
+            system_prompt: Ignored — the fused system prompt is always used.
+            chat_history: Recent messages for context resolution.
+
+        Returns:
+            Dict with keys: ``answer`` (str), ``rewritten_query`` (str | None),
+            ``confidence`` (float | None), ``queue_wait_ms`` (float).
+        """
+        history_block = ""
+        if chat_history:
+            lines = []
+            for msg in chat_history[-6:]:
+                role = "Người dùng" if msg.get("role") == "user" else "Trợ lý"
+                content = str(msg.get("content", "")).strip()
+                if content:
+                    lines.append(f"{role}: {content}")
+            if lines:
+                history_block = "Lịch sử hội thoại gần nhất:\n" + "\n".join(lines) + "\n\n"
+
+        full_prompt = (
+            f"{_FUSED_SYSTEM_PROMPT}\n\n"
+            "Ngữ cảnh tài liệu:\n"
+            f"{context}\n\n"
+            f"{history_block}"
+            f"Câu hỏi: {query}"
+        )
+
+        queue_wait_ms = self._acquire()
+        logger.debug("[llm] generate_response_fused — queue_wait=%.1f ms", queue_wait_ms)
+        try:
+            raw = self.llm.invoke(full_prompt)
+        except Exception:
+            logger.exception("[llm] generate_response_fused failed")
+            raise
+        finally:
+            # Semaphore is ALWAYS released here — synchronous function,
+            # so this finally block always runs regardless of caller lifecycle.
+            self._release()
+
+        fused = FusedLLMResponse.from_json(raw)
+
+        # Apply answer validation to fused result as well
+        validated_answer = _validate_and_clean_answer(fused.answer, query)
+        return {
+            "answer": validated_answer,
+            "rewritten_query": fused.rewritten_query,
+            "confidence": fused.confidence,
+            "queue_wait_ms": queue_wait_ms,
+        }
+
+    def generate_response_fused_stream(
+        self,
+        query: str,
+        context: str,
+        chat_history: Optional[List[Dict[str, Any]]] = None,
+    ) -> Generator[str, None, None]:
+        """Stream the fused generation token by token.
+
+        Note: Because the LLM output is JSON, the caller must accumulate all
+        tokens and parse the complete JSON after streaming finishes.
+        This method is provided for TTFT measurement — the first token arrives
+        quickly even though the full JSON is only parseable at the end.
+
+        Yields:
+            Individual token strings.
+        """
+        history_block = ""
+        if chat_history:
+            lines = []
+            for msg in chat_history[-6:]:
+                role = "Người dùng" if msg.get("role") == "user" else "Trợ lý"
+                content = str(msg.get("content", "")).strip()
+                if content:
+                    lines.append(f"{role}: {content}")
+            if lines:
+                history_block = "Lịch sử hội thoại gần nhất:\n" + "\n".join(lines) + "\n\n"
+
+        full_prompt = (
+            f"{_FUSED_SYSTEM_PROMPT}\n\n"
+            "Ngữ cảnh tài liệu:\n"
+            f"{context}\n\n"
+            f"{history_block}"
+            f"Câu hỏi: {query}"
+        )
+
+        yield from self.stream(full_prompt)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -16,12 +17,20 @@ from src.config import (
     EMBEDDING_BATCH_SIZE,
     EMBEDDING_MODEL,
     POSTGRES_CONNECTION_STRING,
+    POSTGRES_POOL_MIN_SIZE,
+    POSTGRES_POOL_MAX_SIZE,
     POSTGRES_SCHEMA,
     POSTGRES_VECTOR_TABLE,
+    SEARCH_RESULT_BUFFER,
     VECTOR_DIMENSION,
     VECTOR_STORE_BACKEND,
+    MMR_FETCH_K,
+    MMR_ENABLED,
 )
 from src.embeddings import EmbeddingManager
+from src.rag.exceptions import PoolTimeoutError
+
+logger = logging.getLogger(__name__)
 
 
 def _sanitize_json(value: Any) -> Any:
@@ -69,6 +78,9 @@ class VectorStoreManager:
         postgres_schema: str = POSTGRES_SCHEMA,
         postgres_table_name: str = POSTGRES_VECTOR_TABLE,
         vector_dimension: int = VECTOR_DIMENSION,
+        pool_min_size: int = POSTGRES_POOL_MIN_SIZE,
+        pool_max_size: int = POSTGRES_POOL_MAX_SIZE,
+        search_result_buffer: int = SEARCH_RESULT_BUFFER,
     ):
         self.persist_directory = persist_directory
         self.collection_name = collection_name
@@ -78,9 +90,13 @@ class VectorStoreManager:
         self.postgres_schema = postgres_schema
         self.postgres_table_name = postgres_table_name
         self.vector_dimension = vector_dimension
+        self.pool_min_size = pool_min_size
+        self.pool_max_size = pool_max_size
+        self.search_result_buffer = search_result_buffer
 
         self._chroma_store: Chroma | None = None
         self._postgres_ready = False
+        self._pool = None  # psycopg.pool.ConnectionPool (lazy-init)
 
         Path(persist_directory).mkdir(parents=True, exist_ok=True)
 
@@ -106,7 +122,60 @@ class VectorStoreManager:
 
         return psycopg, Vector, register_vector, dict_row
 
+    def _get_pool(self):
+        """Lazy-init and return the psycopg connection pool.
+
+        The pool is created once and reused for all subsequent queries.
+        Pool size is controlled by ``pool_min_size`` / ``pool_max_size``.
+
+        Requires the ``psycopg-pool`` package (``pip install psycopg-pool``).
+        """
+        if self._pool is not None:
+            return self._pool
+
+        try:
+            # psycopg-pool ships as a separate package: psycopg_pool
+            # (not psycopg.pool which is only available in psycopg[pool] extras)
+            import psycopg_pool
+            from pgvector.psycopg import register_vector
+            from psycopg.rows import dict_row
+
+            def configure(conn):
+                conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+                conn.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
+                register_vector(conn)
+
+            self._pool = psycopg_pool.ConnectionPool(
+                conninfo=self.postgres_connection_string,
+                min_size=self.pool_min_size,
+                max_size=self.pool_max_size,
+                timeout=30,
+                kwargs={"autocommit": True, "row_factory": dict_row},
+                configure=configure,
+                open=False,  # Lazy open — don't block on init; connections created on first use
+            )
+            self._pool.open(wait=False)  # Start opening in background, don't block
+            logger.debug(
+                "[pool] Initialised PostgreSQL connection pool min=%d max=%d",
+                self.pool_min_size,
+                self.pool_max_size,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[pool] Failed to create connection pool (%s) — falling back to single connections.",
+                exc,
+            )
+            self._pool = None
+            raise
+
+        return self._pool
+
     def _get_postgres_connection(self):
+        """Return a single psycopg connection.
+
+        Used for schema migration (which needs an advisory lock + transaction)
+        and as a fallback when the pool is unavailable.
+        """
         psycopg, _, register_vector, dict_row = self._import_postgres_dependencies()
         conn = psycopg.connect(
             self.postgres_connection_string,
@@ -117,6 +186,28 @@ class VectorStoreManager:
         conn.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
         register_vector(conn)
         return conn
+
+    def _pool_connection(self):
+        """Context manager that yields a connection from the pool.
+
+        Falls back to a direct connection if the pool is not available.
+
+        Raises:
+            PoolTimeoutError: if the pool cannot provide a connection within 30 s.
+        """
+        try:
+            pool = self._get_pool()
+            try:
+                return pool.connection()
+            except Exception as exc:
+                raise PoolTimeoutError(
+                    f"PostgreSQL connection pool timed out or failed: {exc}"
+                ) from exc
+        except PoolTimeoutError:
+            raise
+        except Exception:
+            # Pool init failed — fall back to direct connection
+            return self._get_postgres_connection()
 
     def _init_postgres_schema(self) -> None:
         if self._postgres_ready:
@@ -250,7 +341,7 @@ class VectorStoreManager:
                 (index, document, source_document)
             )
 
-        with self._get_postgres_connection() as conn:
+        with self._pool_connection() as conn:
             for source_key, items in grouped.items():
                 source_document = items[0][2]
 
@@ -425,15 +516,49 @@ class VectorStoreManager:
         k: int = 4,
         filter: Optional[Dict[str, Any]] = None,
         keyword_query: Optional[str] = None,
+        mmr_enabled: bool = MMR_ENABLED,
+        mmr_fetch_k: int = MMR_FETCH_K,
     ) -> List[Document]:
+        """Hybrid search (pgvector cosine + FTS) with Reciprocal Rank Fusion.
+
+        The HNSW index ``idx_document_chunks_embedding USING hnsw (embedding vector_cosine_ops)``
+        is used automatically by PostgreSQL for the vector similarity scan.
+
+        Args:
+            query:         Semantic search query (rewritten / expanded).
+            k:             Number of final results to return. Must be >= 1.
+            filter:        Optional metadata filter applied as a pre-filter
+                           (``WHERE metadata @> %s::jsonb``) before vector distance.
+            keyword_query: Original query used for FTS (preserves abbreviations).
+            mmr_enabled:   When True, fetch ``mmr_fetch_k`` candidates for MMR reranking.
+            mmr_fetch_k:   Candidate pool size when MMR is enabled.
+
+        Returns:
+            Up to ``k`` :class:`~langchain_core.documents.Document` objects ranked by RRF score.
+
+        Raises:
+            ValueError: if ``k < 1``.
+        """
+        if k < 1:
+            raise ValueError(f"k must be >= 1, got {k}")
+
         self._init_postgres_schema()
+
+        # Determine how many candidates to fetch from the DB.
+        # When MMR is disabled: fetch k + buffer to compensate for ranking noise,
+        # then trim back to k after RRF scoring.
+        # When MMR is enabled: fetch mmr_fetch_k for the MMR candidate pool.
+        if mmr_enabled:
+            fetch_limit = mmr_fetch_k
+        else:
+            fetch_limit = k + self.search_result_buffer
 
         # If keyword_query is not provided, use the semantic query
         fts_query = keyword_query if keyword_query else query
 
         _, Vector, _, _ = self._import_postgres_dependencies()
         query_vector = Vector(self.embedding_manager.embed_query(query))
-        
+
         where_clause_semantic = ""
         where_clause_keyword = ""
         filter_json = None
@@ -462,7 +587,7 @@ class VectorStoreManager:
             JOIN {self.postgres_schema}.documents d ON d.id = c.document_id
             WHERE 1=1 {where_clause_semantic}
             ORDER BY c.embedding <=> %s
-            LIMIT 50
+            LIMIT %s
         ),
         keyword_search AS (
             SELECT
@@ -482,7 +607,7 @@ class VectorStoreManager:
             JOIN {self.postgres_schema}.documents d ON d.id = c.document_id
             WHERE (c.fts_vector @@ websearch_to_tsquery('simple', %s) OR c.fts_vector @@ websearch_to_tsquery('simple', %s)) {where_clause_keyword}
             ORDER BY keyword_score DESC
-            LIMIT 50
+            LIMIT %s
         )
         SELECT
             COALESCE(s.chunk_id, k.chunk_id) AS chunk_id,
@@ -506,22 +631,22 @@ class VectorStoreManager:
         """
 
         final_params = []
-        # Semantic parameters
+        # Semantic CTE parameters
         final_params.extend([query_vector, query_vector])
         if filter:
             final_params.append(filter_json)
-        final_params.append(query_vector)
-        
-        # Keyword parameters (Semantic Query + Keyword Query)
-        # We repeat them for rank, rank_order, and where clause
+        final_params.extend([query_vector, fetch_limit])
+
+        # Keyword CTE parameters
         final_params.extend([query, fts_query, query, fts_query, query, fts_query])
         if filter:
             final_params.append(filter_json)
-            
-        # Limit parameter
+        final_params.append(fetch_limit)
+
+        # Final LIMIT — trim to k after RRF scoring
         final_params.append(k)
 
-        with self._get_postgres_connection() as conn:
+        with self._pool_connection() as conn:
             rows = conn.execute(sql, final_params).fetchall()
 
         documents: List[Document] = []
@@ -561,14 +686,14 @@ class VectorStoreManager:
     def _postgres_delete_collection(self) -> None:
         self._init_postgres_schema()
 
-        with self._get_postgres_connection() as conn:
+        with self._pool_connection() as conn:
             conn.execute(f"DELETE FROM {self.postgres_schema}.{self.postgres_table_name}")
             conn.execute(f"DELETE FROM {self.postgres_schema}.documents")
 
     def _postgres_collection_stats(self) -> Dict[str, Any]:
         self._init_postgres_schema()
 
-        with self._get_postgres_connection() as conn:
+        with self._pool_connection() as conn:
             row = conn.execute(
                 f"SELECT COUNT(*) AS count FROM {self.postgres_schema}.{self.postgres_table_name}"
             ).fetchone()
@@ -631,7 +756,7 @@ class VectorStoreManager:
 
         # Build a dict: chunk_id -> embedding vector
         id_to_emb: Dict[str, List[float]] = {}
-        with self._get_postgres_connection() as conn:
+        with self._pool_connection() as conn:
             placeholders = ",".join(["%s"] * len(chunk_ids))
             rows = conn.execute(
                 f"SELECT id, embedding::text AS emb "

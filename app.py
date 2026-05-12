@@ -1,11 +1,20 @@
 """
 Streamlit Chat Interface - Giao diện giống ChatGPT
 """
+import logging
 import streamlit as st
 from pathlib import Path
 import sys
 import time
 import json
+
+# Configure root logger so pipeline debug messages appear in the terminal.
+# Change to logging.WARNING to silence them in production.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -289,8 +298,14 @@ st.markdown("""
 
 @st.cache_resource
 def init_rag():
-    """Initialize RAG pipeline (cached)"""
-    return RAGPipeline()
+    """Initialize RAG pipeline (cached) and warm up the LLM in the background."""
+    import threading
+    rag = RAGPipeline()
+    # Run warmup in a background thread so Streamlit is not blocked.
+    # The first real query may still need to load the model, but the UI
+    # will be responsive immediately.
+    threading.Thread(target=rag.warmup, daemon=True, name="llm_warmup").start()
+    return rag
 
 
 @st.cache_resource
@@ -588,13 +603,19 @@ def main():
                             print(f"[INGESTION_DEBUG] Final result: {count} chunks loaded")
                             st.success(f"✅ Đã tải {count} chunks!")
 
-            # Stats
+            # Stats + Cache control
             try:
                 rag = init_rag()
                 stats = rag.get_stats()
+                cache_hits = stats.get("cache_hits", 0)
+                cache_misses = stats.get("cache_misses", 0)
                 st.markdown(f"""
-                <span class="model-badge">📄 {stats['vector_store']['count']} documents</span>
+                <span class="model-badge">📄 {stats['vector_store']['count']} docs</span>
                 """, unsafe_allow_html=True)
+                st.caption(f"Cache: {cache_hits} hits / {cache_misses} misses")
+                if st.button("🗑️ Clear Cache", use_container_width=True, help="Xóa cache khi vừa re-index tài liệu"):
+                    rag.clear_cache()
+                    st.success("✅ Cache đã được xóa")
             except Exception:
                 pass
 
@@ -718,21 +739,48 @@ def main():
                     summary=st.session_state.rolling_summary,
                     user_memories=st.session_state.user_memories,
                 )
-                result = rag.query(
-                    prompt,
-                    system_prompt=system_prompt,
-                    chat_history=st.session_state.messages[:-1],  # exclude current user msg
-                )
-                response = result["answer"]
-                sources = result.get("sources", [])
-                
-                # Typing effect
-                displayed_text = ""
-                for char in response:
-                    displayed_text += char
-                    message_placeholder.markdown(displayed_text + "▌")
-                    time.sleep(0.008)
-                message_placeholder.markdown(response)
+
+                from src.config import STREAMING_ENABLED
+
+                if STREAMING_ENABLED:
+                    # ── True token streaming ──────────────────────────────
+                    # Stream tokens directly from Ollama — no time.sleep() needed.
+                    displayed_text = ""
+                    sources: list = []
+                    try:
+                        for token in rag.query_stream(
+                            prompt,
+                            k=15,
+                            system_prompt=system_prompt,
+                            chat_history=st.session_state.messages[:-1],
+                        ):
+                            displayed_text += token
+                            message_placeholder.markdown(displayed_text + "▌")
+                        message_placeholder.markdown(displayed_text)
+                        response = displayed_text
+                    except Exception as stream_exc:
+                        # Streaming failed — fall back to non-streaming
+                        st.warning(f"Streaming failed ({stream_exc}), retrying…")
+                        result = rag.query(
+                            prompt,
+                            k=15,
+                            system_prompt=system_prompt,
+                            chat_history=st.session_state.messages[:-1],
+                        )
+                        response = result["answer"]
+                        sources = result.get("sources", [])
+                        message_placeholder.markdown(response)
+                else:
+                    # ── Non-streaming fallback ────────────────────────────
+                    result = rag.query(
+                        prompt,
+                        k=15,
+                        system_prompt=system_prompt,
+                        chat_history=st.session_state.messages[:-1],
+                    )
+                    response = result["answer"]
+                    sources = result.get("sources", [])
+                    message_placeholder.markdown(response)
                 
                 if sources:
                     with st.expander("📚 Nguồn tham khảo"):
@@ -756,32 +804,58 @@ def main():
                     content=response,
                     sources=sources if sources else None,
                 )
-                st.session_state.rolling_summary = update_rolling_summary(
-                    rag=rag,
-                    old_summary=st.session_state.rolling_summary,
-                    recent_messages=st.session_state.messages,
-                )
-                store.upsert_conversation_summary(
-                    user_id=st.session_state.auth_user_id,
-                    conversation_id=st.session_state.current_conversation_id,
-                    summary=st.session_state.rolling_summary,
-                    last_message_id=None,
-                )
 
-                extracted_memories = extract_selected_user_memories(
-                    rag=rag,
-                    recent_messages=st.session_state.messages,
-                )
-                if extracted_memories:
-                    store.upsert_user_memories(
-                        user_id=st.session_state.auth_user_id,
-                        memories=extracted_memories,
-                        min_confidence=0.7,
-                        max_memories=50,
+                # ── Async post-response tasks ─────────────────────────────
+                # Submit rolling-summary update and memory extraction to run
+                # in background threads so the UI is unblocked immediately.
+                from src.config import ASYNC_POST_PROCESSING_ENABLED
+
+                _messages_snapshot = list(st.session_state.messages)
+                _conv_id = st.session_state.current_conversation_id
+                _user_id = st.session_state.auth_user_id
+                _old_summary = st.session_state.rolling_summary
+
+                def _update_summary():
+                    new_summary = update_rolling_summary(
+                        rag=rag,
+                        old_summary=_old_summary,
+                        recent_messages=_messages_snapshot,
                     )
+                    store.upsert_conversation_summary(
+                        user_id=_user_id,
+                        conversation_id=_conv_id,
+                        summary=new_summary,
+                        last_message_id=None,
+                    )
+                    # Update session state from background thread is not safe in
+                    # Streamlit — the next rerun will re-fetch from DB instead.
+
+                def _extract_memories():
+                    extracted = extract_selected_user_memories(
+                        rag=rag,
+                        recent_messages=_messages_snapshot,
+                    )
+                    if extracted:
+                        store.upsert_user_memories(
+                            user_id=_user_id,
+                            memories=extracted,
+                            min_confidence=0.7,
+                            max_memories=50,
+                        )
+
+                if ASYNC_POST_PROCESSING_ENABLED:
+                    rag.post_task_executor.submit(
+                        _update_summary, task_name="rolling_summary_update"
+                    )
+                    rag.post_task_executor.submit(
+                        _extract_memories, task_name="memory_extraction"
+                    )
+                else:
+                    # Synchronous fallback
+                    _update_summary()
+                    _extract_memories()
                     st.session_state.user_memories = store.list_user_memories(
-                        st.session_state.auth_user_id,
-                        limit=12,
+                        _user_id, limit=12
                     )
                     
             except Exception as e:
