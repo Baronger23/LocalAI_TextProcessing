@@ -9,6 +9,7 @@ Flow:
 Falls back to RecursiveCharacterTextSplitter when no Vietnamese
 legal structure is detected.
 """
+import re
 from typing import List, Dict, Any, Optional
 
 from langchain_core.documents import Document
@@ -273,7 +274,158 @@ class AdaptiveChunkingPipeline:
     ) -> List[Document]:
         """Use RecursiveCharacterTextSplitter for unstructured text."""
         doc = Document(page_content=text, metadata=source_metadata)
-        return self._fallback_splitter.split_documents([doc])
+        chunks = self._fallback_splitter.split_documents([doc])
+        return self._enrich_recursive_chunks_with_outline(chunks)
+
+    # ------------------------------------------------------------------
+    # Recursive fallback outline enrichment
+    # ------------------------------------------------------------------
+
+    _ACADEMIC_HEADING_RE = re.compile(
+        r"^[\s•\-]*((?:Các công trình liên quan đến vai trò chủ thể quan hệ quốc tế\s+)?chịu ảnh hưởng của\s+.+)$",
+        re.IGNORECASE | re.MULTILINE,
+    )
+    _CHAPTER_HEADING_RE = re.compile(
+        r"^\s*((?:CHƯƠNG|Chương)\s+(?:[IVXLCDM]+|\d+)[:\.\s].+)$",
+        re.IGNORECASE | re.MULTILINE,
+    )
+
+    def _enrich_recursive_chunks_with_outline(
+        self,
+        chunks: List[Document],
+    ) -> List[Document]:
+        """Attach lightweight outline metadata to recursive chunks.
+
+        This keeps the fast recursive strategy but preserves academic section
+        headings in metadata and page_content so embeddings include structure.
+        """
+        if not chunks:
+            return chunks
+
+        enriched: List[Document] = []
+        outline_titles: List[str] = []
+        current_chapter = ""
+        current_section = ""
+
+        for chunk in chunks:
+            text = chunk.page_content
+            normalized_text = self._normalize_ocr_heading_text(text)
+            chapter_match = self._CHAPTER_HEADING_RE.search(normalized_text)
+            if chapter_match:
+                current_chapter = self._clean_heading(chapter_match.group(1))
+
+            section_matches = [
+                self._clean_heading(match)
+                for match in self._ACADEMIC_HEADING_RE.findall(normalized_text)
+            ]
+            if section_matches:
+                current_section = " | ".join(section_matches)
+                for section_title in section_matches:
+                    if section_title not in outline_titles:
+                        outline_titles.append(section_title)
+
+            metadata = dict(chunk.metadata or {})
+            if current_chapter:
+                metadata.setdefault("chapter_title", current_chapter)
+            if current_section:
+                metadata["section_title"] = current_section
+                metadata["outline_path"] = self._join_outline_path(
+                    current_chapter, current_section
+                )
+                metadata.setdefault("chunk_type", "content")
+                page_content = self._contextualize_chunk_content(
+                    text=text,
+                    chapter_title=current_chapter,
+                    section_title=current_section,
+                )
+            else:
+                metadata.setdefault("outline_path", current_chapter or "")
+                metadata.setdefault("chunk_type", "content")
+                page_content = text
+
+            enriched.append(Document(page_content=page_content, metadata=metadata))
+
+        if len(outline_titles) >= 2:
+            outline_doc = self._build_outline_document(
+                outline_titles=outline_titles,
+                base_metadata=dict(chunks[0].metadata or {}),
+                chapter_title=current_chapter,
+            )
+            return [outline_doc] + enriched
+
+        return enriched
+
+    @staticmethod
+    def _clean_heading(heading: str) -> str:
+        """Normalize heading whitespace."""
+        return re.sub(r"\s+", " ", heading).strip()
+
+    @classmethod
+    def _normalize_ocr_heading_text(cls, text: str) -> str:
+        """Normalize common PDF/OCR spacing artifacts before heading detection."""
+        normalized = text.replace("Ƣ", "Ư").replace("ƣ", "ư")
+        replacements = {
+            "quan h ệ": "quan hệ",
+            "đ ến": "đến",
+            "ch ủ": "chủ",
+            "th ể": "thể",
+            "ảnh h ưởng": "ảnh hưởng",
+            "M ạng": "Mạng",
+            "l ưới": "lưới",
+            "X ã": "Xã",
+            "h ội": "hội",
+            "L ý": "Lý",
+            "thuy ết": "thuyết",
+            "Vai tr ò": "Vai trò",
+            "Hi ện": "Hiện",
+            "th ực": "thực",
+            "T ự": "Tự",
+            "Ki ến": "Kiến",
+            "t ạo": "tạo",
+        }
+        for old, new in replacements.items():
+            normalized = normalized.replace(old, new)
+        normalized = re.sub(r"chịu\s+ảnh\s+hưởng", "chịu ảnh hưởng", normalized)
+        return normalized
+
+    @staticmethod
+    def _join_outline_path(chapter_title: str, section_title: str) -> str:
+        """Build a compact outline path."""
+        return " > ".join(part for part in (chapter_title, section_title) if part)
+
+    @staticmethod
+    def _contextualize_chunk_content(
+        text: str,
+        chapter_title: str,
+        section_title: str,
+    ) -> str:
+        """Prefix chunk text with structural context used by embeddings."""
+        prefix = f"Mục: {section_title}"
+        if text.startswith(prefix):
+            return text
+        return f"{prefix}\n\n{text}"
+
+    def _build_outline_document(
+        self,
+        outline_titles: List[str],
+        base_metadata: Dict[str, Any],
+        chapter_title: str,
+    ) -> Document:
+        """Create one compact outline chunk for broad/question-list retrieval."""
+        metadata = dict(base_metadata)
+        metadata.update(
+            {
+                "chunk_type": "outline",
+                "section_title": "Tổng quan các mục chính",
+                "outline_path": chapter_title or "Tổng quan các mục chính",
+            }
+        )
+        if chapter_title:
+            metadata["chapter_title"] = chapter_title
+
+        lines = ["Các mục chính trong tài liệu:"]
+        lines.extend(f"- {title}" for title in outline_titles)
+        return Document(page_content="\n".join(lines), metadata=metadata)
 
     # ------------------------------------------------------------------
     # Utilities

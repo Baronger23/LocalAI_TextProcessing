@@ -5,7 +5,7 @@ Supports parallel file parsing via ThreadPoolExecutor.
 """
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from langchain_community.document_loaders import (
     PyPDFLoader,
@@ -43,7 +43,11 @@ class DocumentProcessor:
         )
 
         # Adaptive chunking pipeline
-        self.adaptive_pipeline = AdaptiveChunkingPipeline(strategy=strategy)
+        self.adaptive_pipeline = AdaptiveChunkingPipeline(
+            strategy=strategy,
+            fallback_chunk_size=chunk_size,
+            fallback_chunk_overlap=chunk_overlap,
+        )
 
     def load_pdf(self, file_path: str) -> List[Document]:
         """Load a PDF file."""
@@ -130,8 +134,64 @@ class DocumentProcessor:
         return documents
 
     def split_documents(self, documents: List[Document]) -> List[Document]:
-        """Split documents using the legacy recursive strategy."""
-        return self.text_splitter.split_documents(documents)
+        """Split documents using recursive strategy with outline enrichment."""
+        merged_documents = self._merge_pages_by_source(documents)
+        return self.adaptive_pipeline.chunk_documents(merged_documents)
+
+    def _merge_pages_by_source(self, documents: List[Document]) -> List[Document]:
+        """Merge page-level loader output by source before chunking.
+
+        PDF loaders usually return one Document per page. Academic section
+        headings often span page boundaries, so outline detection works better
+        on the complete source text.
+        """
+        grouped: Dict[str, List[Document]] = {}
+        source_order: List[str] = []
+
+        for doc in documents:
+            source = str(
+                doc.metadata.get("source")
+                or doc.metadata.get("file_path")
+                or doc.metadata.get("file_name")
+                or f"document-{len(source_order)}"
+            )
+            if source not in grouped:
+                grouped[source] = []
+                source_order.append(source)
+            grouped[source].append(doc)
+
+        if all(len(items) == 1 for items in grouped.values()):
+            return documents
+
+        merged: List[Document] = []
+        for source in source_order:
+            items = grouped[source]
+            if len(items) == 1:
+                merged.append(items[0])
+                continue
+
+            sorted_items = sorted(
+                items,
+                key=lambda item: item.metadata.get("page", item.metadata.get("page_number", 0)),
+            )
+            merged_metadata = dict(sorted_items[0].metadata)
+            pages = [
+                item.metadata.get("page", item.metadata.get("page_number"))
+                for item in sorted_items
+                if item.metadata.get("page", item.metadata.get("page_number")) is not None
+            ]
+            if pages:
+                merged_metadata["page_start"] = min(pages)
+                merged_metadata["page_end"] = max(pages)
+                merged_metadata.pop("page", None)
+                merged_metadata.pop("page_number", None)
+            merged_metadata["source"] = source
+            merged_metadata["merged_pages"] = len(sorted_items)
+
+            merged_text = "\n\n".join(item.page_content for item in sorted_items)
+            merged.append(Document(page_content=merged_text, metadata=merged_metadata))
+
+        return merged
 
     def split_documents_adaptive(
         self, documents: List[Document],

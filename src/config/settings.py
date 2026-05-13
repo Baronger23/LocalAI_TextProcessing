@@ -168,3 +168,21 @@ EMBEDDING_CACHE_MAX_SIZE = _safe_int("EMBEDDING_CACHE_MAX_SIZE", 1000)
 # Extra candidates fetched beyond k in hybrid search to compensate for
 # ranking noise before trimming back to k at the application layer.
 SEARCH_RESULT_BUFFER = _safe_int("SEARCH_RESULT_BUFFER", 5)
+
+# ---------------------------------------------------------------------------
+# Response quality settings
+# ---------------------------------------------------------------------------
+
+# Default retrieval size for focused/fact-style questions.
+DEFAULT_TOP_K = _safe_int("DEFAULT_TOP_K", 8)
+
+# Retrieval size for broad synthesis/analysis questions that need wider coverage.
+BROAD_QUERY_TOP_K = _safe_int("BROAD_QUERY_TOP_K", 15)
+
+# Maximum number of characters packed into the LLM context.
+MAX_CONTEXT_CHARS = _safe_int("MAX_CONTEXT_CHARS", 18000)
+
+# Add keyword-only retrieval results for broad questions to recover exact
+# headings, names, years, and technical phrases missed by vector search.
+KEYWORD_SUPPLEMENT_ENABLED = _safe_bool("KEYWORD_SUPPLEMENT_ENABLED", True)
+KEYWORD_SUPPLEMENT_TOP_K = _safe_int("KEYWORD_SUPPLEMENT_TOP_K", 8)

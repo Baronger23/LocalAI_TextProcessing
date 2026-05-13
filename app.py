@@ -317,10 +317,12 @@ def init_chat_store():
 def build_system_prompt_with_summary(summary: str) -> str:
     """Build response instruction with persistent rolling summary context."""
     base_prompt = (
-        "Bạn là trợ lý AI thông minh chuyên xử lý văn bản nội bộ. "
-        "Hãy trả lời dựa trên ngữ cảnh truy xuất được từ tài liệu. "
-        "Nếu thiếu dữ liệu thì nói rõ là chưa đủ thông tin. "
-        "Luôn trả lời tiếng Việt, rõ ràng và chính xác."
+        "Bạn là trợ lý học thuật chuyên phân tích tài liệu Quan hệ Quốc tế (QHQT). "
+        "Hãy trả lời đúng trọng tâm câu hỏi, dựa trên ngữ cảnh truy xuất được từ tài liệu. "
+        "Với câu hỏi tổng hợp hoặc phân tích, phải bao quát đầy đủ các ý chính có trong context, "
+        "nhóm ý rõ ràng và giải thích quan hệ giữa các luận điểm thay vì chỉ liệt kê tên mục. "
+        "Nếu context thiếu dữ liệu hoặc chưa đủ thông tin để kết luận một phần nào đó, hãy nói rõ giới hạn này. "
+        "Luôn trả lời bằng tiếng Việt, mạch lạc, có phân tích, không bịa thêm ngoài tài liệu."
     )
 
     summary_text = (summary or "").strip()
@@ -365,6 +367,58 @@ def build_system_prompt(summary: str, user_memories: list[dict]) -> str:
         f"{memories_text}\n\n"
         "Các memory này là ngữ cảnh mềm: ưu tiên độ chính xác theo tài liệu truy xuất ở lượt hiện tại."
     )
+
+
+def _source_file_name(metadata: dict) -> str:
+    source = str(metadata.get("file_name") or metadata.get("source") or "Không rõ")
+    return Path(source).name if source else "Không rõ"
+
+
+def _source_location(metadata: dict) -> str:
+    parts = []
+    page_start = metadata.get("page_start")
+    page_end = metadata.get("page_end")
+    page = metadata.get("page_number") or metadata.get("page")
+    chunk_index = metadata.get("chunk_index")
+    section = metadata.get("section_title") or metadata.get("chapter_title")
+    retrieval_method = metadata.get("retrieval_method")
+
+    if page_start is not None and page_end is not None:
+        if page_start == page_end:
+            parts.append(f"trang {page_start}")
+        else:
+            parts.append(f"trang {page_start}-{page_end}")
+    elif page is not None:
+        parts.append(f"trang {page}")
+    if chunk_index is not None:
+        parts.append(f"chunk {chunk_index}")
+    if section:
+        parts.append(str(section))
+    if retrieval_method:
+        parts.append(str(retrieval_method))
+    return " | ".join(parts)
+
+
+def render_sources(sources: list[dict]) -> None:
+    """Render retrieved source snippets in a compact citation panel."""
+    if not sources:
+        return
+
+    with st.expander(f"📚 Nguồn tham khảo ({len(sources)})"):
+        for i, source in enumerate(sources, 1):
+            metadata = source.get("metadata", {}) or {}
+            breadcrumb = source.get("breadcrumb") or metadata.get("breadcrumb", "")
+            source_name = _source_file_name(metadata)
+            location = _source_location(metadata)
+            preview = str(source.get("content", "")).strip()
+
+            st.markdown(f"**[{i}] {source_name}**")
+            if location:
+                st.caption(location)
+            if breadcrumb:
+                st.caption(str(breadcrumb))
+            if preview:
+                st.caption(preview[:260] + ("..." if len(preview) > 260 else ""))
 
 
 def update_rolling_summary(rag: RAGPipeline, old_summary: str, recent_messages: list[dict]) -> str:
@@ -693,14 +747,7 @@ def main():
                 st.markdown(message["content"])
                 
                 if message.get("sources"):
-                    with st.expander("📚 Nguồn tham khảo"):
-                        for i, source in enumerate(message["sources"], 1):
-                            breadcrumb = source.get("breadcrumb") or source.get("metadata", {}).get("breadcrumb", "")
-                            source_file = source.get("metadata", {}).get("source", "Không rõ")
-                            if breadcrumb:
-                                st.caption(f"**Nguồn {i}:** {breadcrumb}")
-                            st.caption(f"Tài liệu: {source_file}")
-                            st.caption(source["content"][:180] + "...")
+                    render_sources(message["sources"])
 
     # Chat input
     if prompt := st.chat_input("Nhập tin nhắn..."):
@@ -747,23 +794,25 @@ def main():
                     # Stream tokens directly from Ollama — no time.sleep() needed.
                     displayed_text = ""
                     sources: list = []
+                    stream_result: dict = {}
+                    message_placeholder.markdown("Đang tìm tài liệu và chuẩn bị câu trả lời...")
                     try:
                         for token in rag.query_stream(
                             prompt,
-                            k=15,
                             system_prompt=system_prompt,
                             chat_history=st.session_state.messages[:-1],
+                            on_complete=stream_result.update,
                         ):
                             displayed_text += token
                             message_placeholder.markdown(displayed_text + "▌")
                         message_placeholder.markdown(displayed_text)
                         response = displayed_text
+                        sources = stream_result.get("sources", [])
                     except Exception as stream_exc:
                         # Streaming failed — fall back to non-streaming
                         st.warning(f"Streaming failed ({stream_exc}), retrying…")
                         result = rag.query(
                             prompt,
-                            k=15,
                             system_prompt=system_prompt,
                             chat_history=st.session_state.messages[:-1],
                         )
@@ -774,7 +823,6 @@ def main():
                     # ── Non-streaming fallback ────────────────────────────
                     result = rag.query(
                         prompt,
-                        k=15,
                         system_prompt=system_prompt,
                         chat_history=st.session_state.messages[:-1],
                     )
@@ -783,14 +831,7 @@ def main():
                     message_placeholder.markdown(response)
                 
                 if sources:
-                    with st.expander("📚 Nguồn tham khảo"):
-                        for i, source in enumerate(sources, 1):
-                            breadcrumb = source.get("breadcrumb") or source.get("metadata", {}).get("breadcrumb", "")
-                            source_file = source.get("metadata", {}).get("source", "Không rõ")
-                            if breadcrumb:
-                                st.caption(f"**Nguồn {i}:** {breadcrumb}")
-                            st.caption(f"Tài liệu: {source_file}")
-                            st.caption(source["content"][:180] + "...")
+                    render_sources(sources)
                 
                 st.session_state.messages.append({
                     "role": "assistant",
@@ -874,8 +915,5 @@ def main():
                 )
 
 
-# Call main() when Streamlit runs the app
-main()
-
 if __name__ == "__main__":
-    pass  # main() already called above
+    main()

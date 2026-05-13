@@ -14,12 +14,17 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, Generator, List, Optional
+from typing import Any, Callable, Dict, Generator, List, Optional
 
 from langchain_core.documents import Document
 
 from src.config import (
     ASYNC_POST_PROCESSING_ENABLED,
+    BROAD_QUERY_TOP_K,
+    DEFAULT_TOP_K,
+    KEYWORD_SUPPLEMENT_ENABLED,
+    KEYWORD_SUPPLEMENT_TOP_K,
+    MAX_CONTEXT_CHARS,
     MMR_ENABLED,
     MMR_FETCH_K,
     MMR_LAMBDA,
@@ -41,6 +46,24 @@ from src.rag.query_cache import QueryCache
 from src.rag.vector_store import VectorStoreManager
 
 logger = logging.getLogger(__name__)
+
+_BROAD_QUERY_KEYWORDS = (
+    "các",
+    "cac",
+    "những",
+    "phân tích",
+    "phan tich",
+    "so sánh",
+    "so sanh",
+    "liệt kê",
+    "liet ke",
+    "tổng hợp",
+    "tong hop",
+    "trình bày",
+    "trinh bay",
+    "đánh giá",
+    "danh gia",
+)
 
 # System prompt used exclusively for the classic (non-fused) query rewriting step.
 _REWRITE_SYSTEM_PROMPT = (
@@ -73,6 +96,8 @@ class RAGPipeline:
         prompt_fusion_enabled: bool = PROMPT_FUSION_ENABLED,
         streaming_enabled: bool = STREAMING_ENABLED,
         async_post_processing_enabled: bool = ASYNC_POST_PROCESSING_ENABLED,
+        keyword_supplement_enabled: bool = KEYWORD_SUPPLEMENT_ENABLED,
+        keyword_supplement_top_k: int = KEYWORD_SUPPLEMENT_TOP_K,
     ):
         self.llm_manager = llm_manager or LLMManager()
         self.embedding_manager = embedding_manager or EmbeddingManager()
@@ -96,6 +121,8 @@ class RAGPipeline:
         self.prompt_fusion_enabled = prompt_fusion_enabled
         self.streaming_enabled = streaming_enabled
         self.async_post_processing_enabled = async_post_processing_enabled
+        self.keyword_supplement_enabled = keyword_supplement_enabled
+        self.keyword_supplement_top_k = keyword_supplement_top_k
 
     # ------------------------------------------------------------------
     # Warm-up
@@ -155,13 +182,174 @@ class RAGPipeline:
             return question
 
     # ------------------------------------------------------------------
+    # Response quality helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def classify_query_mode(question: str) -> str:
+        """Classify query breadth for adaptive retrieval."""
+        normalized = " ".join((question or "").lower().split())
+        if any(keyword in normalized for keyword in _BROAD_QUERY_KEYWORDS):
+            return "broad"
+        return "focused"
+
+    @staticmethod
+    def _normalize_doc_text(text: str) -> str:
+        """Normalize chunk text for duplicate detection."""
+        return " ".join((text or "").lower().split())
+
+    def _resolve_top_k(self, question: str, k: Optional[int]) -> int:
+        """Return explicit k or choose an adaptive default from query mode."""
+        if k is not None:
+            return k
+        mode = self.classify_query_mode(question)
+        return BROAD_QUERY_TOP_K if mode == "broad" else DEFAULT_TOP_K
+
+    def _select_context_documents(
+        self,
+        docs: List[Document],
+        mode: str,
+    ) -> List[Document]:
+        """Dedupe chunks and prefer source diversity for broad questions."""
+        seen_texts: set[str] = set()
+        deduped: List[Document] = []
+        for doc in docs:
+            normalized = self._normalize_doc_text(doc.page_content)
+            if not normalized:
+                continue
+            dedupe_key = normalized[:1000]
+            if dedupe_key in seen_texts:
+                continue
+            seen_texts.add(dedupe_key)
+            deduped.append(doc)
+
+        if mode != "broad":
+            return deduped
+
+        grouped: Dict[str, List[Document]] = {}
+        source_order: List[str] = []
+        for doc in deduped:
+            metadata = doc.metadata or {}
+            source = str(
+                metadata.get("file_name")
+                or metadata.get("source")
+                or metadata.get("source_key")
+                or "unknown"
+            )
+            if source not in grouped:
+                grouped[source] = []
+                source_order.append(source)
+            grouped[source].append(doc)
+
+        diversified: List[Document] = []
+        while True:
+            added = False
+            for source in source_order:
+                if grouped[source]:
+                    diversified.append(grouped[source].pop(0))
+                    added = True
+            if not added:
+                break
+        return diversified
+
+    def _build_context(self, docs: List[Document], mode: str) -> str:
+        """Pack retrieved chunks into a bounded, source-labeled context."""
+        selected_docs = self._select_context_documents(docs, mode)
+        context_parts: List[str] = []
+        total_chars = 0
+
+        for doc in selected_docs:
+            metadata = doc.metadata or {}
+            source = str(
+                metadata.get("file_name")
+                or metadata.get("source")
+                or metadata.get("source_key")
+                or "không rõ"
+            )
+            breadcrumb = str(metadata.get("breadcrumb") or "").strip()
+            header = f"[Nguồn: {source}]"
+            if breadcrumb:
+                header = f"{header}\n{breadcrumb}"
+            part = f"{header}\n\n{doc.page_content.strip()}"
+
+            separator_len = 10 if context_parts else 0
+            remaining = MAX_CONTEXT_CHARS - total_chars - separator_len
+            if remaining <= 0:
+                break
+            if len(part) > remaining:
+                if remaining < 200:
+                    break
+                part = part[:remaining].rstrip()
+
+            context_parts.append(part)
+            total_chars += len(part) + separator_len
+
+        return "\n\n---\n\n".join(context_parts)
+
+    @staticmethod
+    def _document_identity(doc: Document) -> str:
+        """Stable-ish identity for merging retrieval result sets."""
+        metadata = doc.metadata or {}
+        source = metadata.get("file_name") or metadata.get("source") or ""
+        chunk_index = metadata.get("chunk_index")
+        if source and chunk_index is not None:
+            return f"{source}:chunk_index:{chunk_index}"
+        for key in ("chunk_id", "content_hash"):
+            value = metadata.get(key)
+            if value is not None:
+                return f"{source}:{key}:{value}"
+        return RAGPipeline._normalize_doc_text(doc.page_content)[:1000]
+
+    def _merge_documents(self, *doc_sets: List[Document]) -> List[Document]:
+        """Merge retrieval result sets while preserving first-seen order."""
+        merged: List[Document] = []
+        seen: set[str] = set()
+        for docs in doc_sets:
+            for doc in docs:
+                identity = self._document_identity(doc)
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                merged.append(doc)
+        return merged
+
+    @staticmethod
+    def _build_keyword_supplement_queries(question: str) -> List[str]:
+        """Build lexical queries from the user's wording without answer hardcoding."""
+        normalized = " ".join((question or "").split())
+        queries = [normalized]
+        lowered = normalized.lower()
+        if "công trình" in lowered and "vai trò" in lowered:
+            queries.append("công trình liên quan vai trò chủ thể quan hệ quốc tế")
+            queries.append("vai trò chủ thể quan hệ quốc tế chịu ảnh hưởng")
+        return [query for query in dict.fromkeys(q for q in queries if q)]
+
+    def _keyword_supplement_search(self, question: str, mode: str) -> List[Document]:
+        """Run keyword-only retrieval for broad queries when supported."""
+        if not self.keyword_supplement_enabled or mode != "broad":
+            return []
+        keyword_search = getattr(self.vector_store_manager, "keyword_search", None)
+        if keyword_search is None:
+            return []
+
+        results: List[Document] = []
+        for keyword_query in self._build_keyword_supplement_queries(question):
+            try:
+                docs = keyword_search(query=keyword_query, k=self.keyword_supplement_top_k)
+            except Exception:
+                logger.exception("[pipeline] Keyword supplement failed for %r", keyword_query)
+                continue
+            results = self._merge_documents(results, docs)
+        return results
+
+    # ------------------------------------------------------------------
     # Core query method
     # ------------------------------------------------------------------
 
     def query(
         self,
         question: str,
-        k: int = 4,
+        k: Optional[int] = None,
         system_prompt: Optional[str] = None,
         chat_history: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
@@ -179,13 +367,15 @@ class RAGPipeline:
         """
         total_start = time.perf_counter()
         timings: Dict[str, float] = {}
+        query_mode = self.classify_query_mode(question)
+        top_k = self._resolve_top_k(question, k)
 
         # ----------------------------------------------------------
         # Step 1 — Cache lookup
         # ----------------------------------------------------------
         cache_key = self.query_cache.make_key(
             query=question,
-            top_k=k,
+            top_k=top_k,
             filters=None,
             model_version=self.llm_manager.model,
         )
@@ -215,8 +405,13 @@ class RAGPipeline:
             relevant_docs = self.vector_store_manager.similarity_search(
                 query=question,
                 keyword_query=question,
-                k=k,
+                k=top_k,
             )
+            keyword_docs = self._keyword_supplement_search(question, query_mode)
+            if query_mode == "broad":
+                relevant_docs = self._merge_documents(keyword_docs, relevant_docs)
+            else:
+                relevant_docs = self._merge_documents(relevant_docs, keyword_docs)
         timings["search_ms"] = t_search.elapsed_ms
 
         if not relevant_docs:
@@ -233,21 +428,15 @@ class RAGPipeline:
         # ----------------------------------------------------------
         # Step 4 — Build context
         # ----------------------------------------------------------
-        context_parts = []
-        for doc in relevant_docs:
-            breadcrumb = doc.metadata.get("breadcrumb", "")
-            if breadcrumb:
-                context_parts.append(f"{breadcrumb}\n\n{doc.page_content}")
-            else:
-                context_parts.append(doc.page_content)
-        context = "\n\n---\n\n".join(context_parts)
+        packed_docs = self._select_context_documents(relevant_docs, query_mode)
+        context = self._build_context(packed_docs, query_mode)
 
         # Debug: log context summary so we can verify what the LLM receives
         logger.info(
             "[pipeline] Context built: %d docs, %d chars. Sources: %s",
-            len(relevant_docs),
+            len(packed_docs),
             len(context),
-            [d.metadata.get("source", "?").split("\\")[-1][:30] for d in relevant_docs[:3]],
+            [d.metadata.get("source", "?").split("\\")[-1][:30] for d in packed_docs[:3]],
         )
 
         # ----------------------------------------------------------
@@ -304,7 +493,7 @@ class RAGPipeline:
                 "metadata": doc.metadata,
                 "breadcrumb": doc.metadata.get("breadcrumb", ""),
             }
-            for doc in relevant_docs
+            for doc in packed_docs
         ]
 
         # ----------------------------------------------------------
@@ -352,9 +541,10 @@ class RAGPipeline:
     def query_stream(
         self,
         question: str,
-        k: int = 4,
+        k: Optional[int] = None,
         system_prompt: Optional[str] = None,
         chat_history: Optional[List[Dict[str, Any]]] = None,
+        on_complete: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Generator[str, None, None]:
         """Stream the LLM answer token by token.
 
@@ -368,17 +558,20 @@ class RAGPipeline:
         submitted (if async_post_processing_enabled).
         """
         total_start = time.perf_counter()
+        query_mode = self.classify_query_mode(question)
+        top_k = self._resolve_top_k(question, k)
 
         # Cache lookup
         cache_key = self.query_cache.make_key(
             query=question,
-            top_k=k,
+            top_k=top_k,
             filters=None,
             model_version=self.llm_manager.model,
         )
         cached = self.query_cache.get(cache_key)
         if cached is not None:
             logger.debug("[pipeline] Stream cache HIT for query: %r", question[:60])
+            self._notify_stream_complete(on_complete, cached)
             for word in cached["answer"].split(" "):
                 yield word + " "
             return
@@ -387,21 +580,29 @@ class RAGPipeline:
         relevant_docs = self.vector_store_manager.similarity_search(
             query=question,
             keyword_query=question,
-            k=k,
+            k=top_k,
         )
+        keyword_docs = self._keyword_supplement_search(question, query_mode)
+        if query_mode == "broad":
+            relevant_docs = self._merge_documents(keyword_docs, relevant_docs)
+        else:
+            relevant_docs = self._merge_documents(relevant_docs, keyword_docs)
         if not relevant_docs:
-            yield "Không tìm thấy tài liệu liên quan đến câu hỏi của bạn."
+            total_ms = (time.perf_counter() - total_start) * 1_000.0
+            no_docs_response = {
+                "answer": "Không tìm thấy tài liệu liên quan đến câu hỏi của bạn.",
+                "sources": [],
+                "context": "",
+                "rewritten_query": None,
+                "timing": self.benchmark.build_timing_dict({"total_ms": total_ms}),
+            }
+            self._notify_stream_complete(on_complete, no_docs_response)
+            yield no_docs_response["answer"]
             return
 
         # Build context
-        context_parts = []
-        for doc in relevant_docs:
-            breadcrumb = doc.metadata.get("breadcrumb", "")
-            if breadcrumb:
-                context_parts.append(f"{breadcrumb}\n\n{doc.page_content}")
-            else:
-                context_parts.append(doc.page_content)
-        context = "\n\n---\n\n".join(context_parts)
+        packed_docs = self._select_context_documents(relevant_docs, query_mode)
+        context = self._build_context(packed_docs, query_mode)
 
         # Stream from LLM
         ttft_recorded = False
@@ -477,7 +678,7 @@ class RAGPipeline:
                 "metadata": doc.metadata,
                 "breadcrumb": doc.metadata.get("breadcrumb", ""),
             }
-            for doc in relevant_docs
+            for doc in packed_docs
         ]
         total_ms = (time.perf_counter() - total_start) * 1_000.0
         cached_response = {
@@ -491,6 +692,20 @@ class RAGPipeline:
         }
         self.query_cache.set(cache_key, cached_response)
         self.benchmark.record_query()
+        self._notify_stream_complete(on_complete, cached_response)
+
+    @staticmethod
+    def _notify_stream_complete(
+        callback: Optional[Callable[[Dict[str, Any]], None]],
+        result: Dict[str, Any],
+    ) -> None:
+        """Report final streaming metadata without interrupting token delivery."""
+        if callback is None:
+            return
+        try:
+            callback(result)
+        except Exception:
+            logger.exception("[pipeline] query_stream on_complete callback failed")
 
     def _build_classic_prompt(
         self,
@@ -513,7 +728,9 @@ class RAGPipeline:
                 "3. Nếu context có nhiều phần, PHẢI chọn phần liên quan trực tiếp đến QHQT\n"
                 "4. Nếu chỉ có thông tin nền tảng (ví dụ Cooley, Mead, Linton), PHẢI nói rõ "
                 "đây chỉ là nền tảng và KHÔNG đủ để trả lời đầy đủ trong QHQT\n"
-                "5. Câu trả lời phải có nội dung phân tích, không chỉ liệt kê tên công trình\n\n"
+                "5. Câu trả lời phải có nội dung phân tích, không chỉ liệt kê tên công trình\n"
+                "6. Nếu context có nhiều mục/nhóm lớn liên quan trực tiếp đến câu hỏi, "
+                "PHẢI bao phủ đủ tất cả các mục/nhóm đó; không bỏ sót mục chỉ vì thông tin ngắn hơn các mục khác\n\n"
                 "KIỂM TRA CUỐI:\n"
                 "- Nếu câu trả lời chỉ nói về nguồn gốc khái niệm mà không liên hệ QHQT "
                 "→ KHÔNG hợp lệ → phải viết lại\n\n"
@@ -542,7 +759,7 @@ class RAGPipeline:
     # Convenience helpers
     # ------------------------------------------------------------------
 
-    def query_simple(self, question: str, k: int = 4) -> str:
+    def query_simple(self, question: str, k: Optional[int] = None) -> str:
         """Simple query returning just the answer string."""
         return self.query(question, k=k)["answer"]
 

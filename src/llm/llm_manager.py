@@ -86,7 +86,8 @@ QUY TẮC BẮT BUỘC:
 3. Nếu context có nhiều phần, PHẢI chọn phần liên quan trực tiếp đến QHQT
 4. Nếu chỉ có thông tin nền tảng (ví dụ Cooley, Mead, Linton), PHẢI nói rõ đây chỉ là nền tảng và KHÔNG đủ để trả lời đầy đủ trong QHQT
 5. Câu trả lời phải có nội dung phân tích, không chỉ liệt kê tên công trình
-6. Trường "answer" phải là câu trả lời HOÀN CHỈNH — KHÔNG chỉ là breadcrumb hay số hiệu chương/điều
+6. Nếu context có nhiều mục/nhóm lớn liên quan trực tiếp đến câu hỏi, PHẢI bao phủ đủ tất cả các mục/nhóm đó; không bỏ sót mục chỉ vì thông tin ngắn hơn các mục khác
+7. Trường "answer" phải là câu trả lời HOÀN CHỈNH — KHÔNG chỉ là breadcrumb hay số hiệu chương/điều
 
 KIỂM TRA CUỐI:
 - Nếu câu trả lời chỉ nói về nguồn gốc khái niệm mà không liên hệ QHQT → KHÔNG hợp lệ → phải viết lại
@@ -287,7 +288,9 @@ class LLMManager:
                 "3. Nếu context có nhiều phần, PHẢI chọn phần liên quan trực tiếp đến QHQT\n"
                 "4. Nếu chỉ có thông tin nền tảng (ví dụ Cooley, Mead, Linton), PHẢI nói rõ "
                 "đây chỉ là nền tảng và KHÔNG đủ để trả lời đầy đủ trong QHQT\n"
-                "5. Câu trả lời phải có nội dung phân tích, không chỉ liệt kê tên công trình\n\n"
+                "5. Câu trả lời phải có nội dung phân tích, không chỉ liệt kê tên công trình\n"
+                "6. Nếu context có nhiều mục/nhóm lớn liên quan trực tiếp đến câu hỏi, "
+                "PHẢI bao phủ đủ tất cả các mục/nhóm đó; không bỏ sót mục chỉ vì thông tin ngắn hơn các mục khác\n\n"
                 "KIỂM TRA CUỐI:\n"
                 "- Nếu câu trả lời chỉ nói về nguồn gốc khái niệm mà không liên hệ QHQT "
                 "→ KHÔNG hợp lệ → phải viết lại\n\n"

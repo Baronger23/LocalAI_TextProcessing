@@ -11,6 +11,7 @@ from src.chunking.vietnamese_chunker import (
 )
 from src.chunking.context_enricher import ContextEnricher
 from src.chunking.chunking_pipeline import AdaptiveChunkingPipeline
+from src.document_loader.loader import DocumentProcessor
 
 
 # ---------------------------------------------------------------------------
@@ -63,6 +64,26 @@ Nội dung này chỉ gồm các đoạn văn thông thường, không tuân the
 format của văn bản pháp luật hay quy chế nội bộ.
 
 Vì vậy hệ thống nên fallback về RecursiveCharacterTextSplitter.
+""".strip()
+
+
+SAMPLE_ACADEMIC_OUTLINE_TEXT = """
+CHƯƠNG 1: TỔNG QUAN TÌNH HÌNH NGHIÊN CỨU
+
+Các công trình liên quan đến vai trò chủ thể quan hệ quốc tế chịu ảnh hưởng của Chủ nghĩa Hiện thực
+Nội dung về các công trình hiện thực.
+
+Các công trình liên quan đến vai trò chủ thể quan hệ quốc tế chịu ảnh hưởng của Chủ nghĩa Tự do
+Nội dung về các công trình tự do.
+
+Các công trình liên quan đến vai trò chủ thể quan hệ quốc tế chịu ảnh hưởng của Chủ nghĩa Kiến tạo
+Nội dung về các công trình kiến tạo.
+
+Các công trình liên quan đến vai trò chủ thể quan hệ quốc tế chịu ảnh hưởng của Lý thuyết Vai trò (Role theory)
+Nội dung về Linton, Mead, Cooley và Holsti.
+
+Các công trình liên quan đến vai trò chủ thể quan hệ quốc tế chịu ảnh hưởng của Phân tích Mạng lưới Xã hội (SNA)
+Nội dung về SNA và centrality.
 """.strip()
 
 
@@ -310,6 +331,143 @@ class TestAdaptiveChunkingPipeline:
         for chunk in chunks:
             assert chunk.metadata.get("source") == "test.pdf"
             assert chunk.metadata.get("page") == 1
+
+    def test_recursive_strategy_adds_academic_outline_metadata(self):
+        """Recursive fallback should still preserve academic section headings."""
+        pipeline = AdaptiveChunkingPipeline(
+            strategy="recursive",
+            fallback_chunk_size=420,
+            fallback_chunk_overlap=0,
+        )
+
+        chunks = pipeline.chunk_text(
+            SAMPLE_ACADEMIC_OUTLINE_TEXT,
+            source_metadata={"source": "lats.pdf"},
+        )
+
+        content_chunks = [
+            chunk for chunk in chunks
+            if chunk.metadata.get("chunk_type") != "outline"
+        ]
+        section_titles = {
+            chunk.metadata.get("section_title")
+            for chunk in content_chunks
+            if chunk.metadata.get("section_title")
+        }
+
+        assert any("Chủ nghĩa Hiện thực" in title for title in section_titles)
+        assert any("Chủ nghĩa Tự do" in title for title in section_titles)
+        assert any("Chủ nghĩa Kiến tạo" in title for title in section_titles)
+        assert any("Lý thuyết Vai trò" in title for title in section_titles)
+        assert any("Phân tích Mạng lưới Xã hội" in title for title in section_titles)
+        assert all("outline_path" in chunk.metadata for chunk in content_chunks)
+
+    def test_recursive_strategy_contextualizes_chunk_content_for_embedding(self):
+        """Embedding text should include the section heading, not body text only."""
+        pipeline = AdaptiveChunkingPipeline(
+            strategy="recursive",
+            fallback_chunk_size=420,
+            fallback_chunk_overlap=0,
+        )
+
+        chunks = pipeline.chunk_text(SAMPLE_ACADEMIC_OUTLINE_TEXT)
+        constructivism_chunk = next(
+            chunk for chunk in chunks
+            if "Nội dung về các công trình kiến tạo" in chunk.page_content
+        )
+
+        assert constructivism_chunk.page_content.startswith("Mục:")
+        assert "Chủ nghĩa Kiến tạo" in constructivism_chunk.page_content.splitlines()[0]
+
+    def test_recursive_strategy_creates_outline_chunk(self):
+        """A compact outline chunk should be available for broad retrieval."""
+        pipeline = AdaptiveChunkingPipeline(
+            strategy="recursive",
+            fallback_chunk_size=420,
+            fallback_chunk_overlap=0,
+        )
+
+        chunks = pipeline.chunk_text(SAMPLE_ACADEMIC_OUTLINE_TEXT)
+        outline_chunks = [
+            chunk for chunk in chunks
+            if chunk.metadata.get("chunk_type") == "outline"
+        ]
+
+        assert len(outline_chunks) == 1
+        outline_text = outline_chunks[0].page_content
+        assert "Chủ nghĩa Hiện thực" in outline_text
+        assert "Chủ nghĩa Tự do" in outline_text
+        assert "Chủ nghĩa Kiến tạo" in outline_text
+        assert "Lý thuyết Vai trò" in outline_text
+        assert "Phân tích Mạng lưới Xã hội" in outline_text
+
+
+class TestDocumentProcessorOutlineIngestion:
+    """Test production ingestion path used by UI/scripts."""
+
+    def test_recursive_split_merges_pages_by_source_before_outline_detection(self):
+        page_1 = Document(
+            page_content=(
+                "CHƯƠNG 1: TỔNG QUAN TÌNH HÌNH NGHIÊN CỨU\n\n"
+                "Các công trình liên quan đến vai trò chủ thể quan hệ quốc tế chịu ảnh hưởng của Chủ nghĩa Hiện thực\n"
+                "Nội dung hiện thực."
+            ),
+            metadata={"source": "lats.pdf", "page": 1},
+        )
+        page_2 = Document(
+            page_content=(
+                "Các công trình liên quan đến vai trò chủ thể quan hệ quốc tế chịu ảnh hưởng của Chủ nghĩa Tự do\n"
+                "Nội dung tự do.\n\n"
+                "Các công trình liên quan đến vai trò chủ thể quan hệ quốc tế chịu ảnh hưởng của Chủ nghĩa Kiến tạo\n"
+                "Nội dung kiến tạo."
+            ),
+            metadata={"source": "lats.pdf", "page": 2},
+        )
+
+        processor = DocumentProcessor(
+            chunk_size=420,
+            chunk_overlap=0,
+            strategy="recursive",
+        )
+        chunks = processor.split_documents([page_1, page_2])
+
+        outline_chunks = [
+            chunk for chunk in chunks
+            if chunk.metadata.get("chunk_type") == "outline"
+        ]
+        assert len(outline_chunks) == 1
+        assert "Chủ nghĩa Hiện thực" in outline_chunks[0].page_content
+        assert "Chủ nghĩa Tự do" in outline_chunks[0].page_content
+        assert "Chủ nghĩa Kiến tạo" in outline_chunks[0].page_content
+        assert all(chunk.metadata.get("source") == "lats.pdf" for chunk in chunks)
+
+    def test_recursive_split_detects_pdf_ocr_spaced_academic_headings(self):
+        text = (
+            "CHƢƠNG 1: TỔNG QUAN TÌNH HÌNH NGHIÊN CỨU\n\n"
+            "Các công trình liên quan đ ến vai trò ch ủ thể quan hệ quốc tế chịu ảnh "
+            "hưởng của Chủ nghĩa Hiện thực\n"
+            "Nội dung hiện thực.\n\n"
+            "Các công trình liên quan đ ến vai trò ch ủ thể quan hệ quốc tế chịu ảnh "
+            "hưởng của Chủ nghĩa Tự do\n"
+            "Nội dung tự do."
+        )
+        processor = DocumentProcessor(
+            chunk_size=420,
+            chunk_overlap=0,
+            strategy="recursive",
+        )
+
+        chunks = processor.split_documents(
+            [Document(page_content=text, metadata={"source": "ocr.pdf"})]
+        )
+        outline_chunks = [
+            chunk for chunk in chunks
+            if chunk.metadata.get("chunk_type") == "outline"
+        ]
+
+        assert len(outline_chunks) == 1
+        assert "Chủ nghĩa Hiện thực" in outline_chunks[0].page_content
+        assert "Chủ nghĩa Tự do" in outline_chunks[0].page_content
 
 
 # ============================================================================

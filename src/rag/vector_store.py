@@ -683,6 +683,82 @@ class VectorStoreManager:
         documents = self._postgres_similarity_search(query=query, k=k)
         return [(document, document.metadata.get("similarity", 0.0)) for document in documents]
 
+    def _postgres_keyword_search(
+        self,
+        query: str,
+        k: int = 8,
+        filter: Optional[Dict[str, Any]] = None,
+    ) -> List[Document]:
+        """Keyword-only PostgreSQL full-text search ranked by lexical score.
+
+        This complements vector search for exact headings, names, years, and
+        repeated technical phrases. It intentionally avoids embedding calls.
+        """
+        if k < 1:
+            raise ValueError(f"k must be >= 1, got {k}")
+
+        self._init_postgres_schema()
+
+        where_clause = ""
+        filter_json = None
+        if filter:
+            where_clause = "AND c.metadata @> %s::jsonb"
+            filter_json = json.dumps(_sanitize_json(filter))
+
+        sql = f"""
+        SELECT
+            c.id as chunk_id,
+            c.content,
+            c.metadata,
+            c.page_number,
+            c.chunk_index,
+            c.document_id,
+            d.source_key,
+            d.file_name,
+            d.file_path,
+            d.metadata AS document_metadata,
+            ts_rank_cd(c.fts_vector, websearch_to_tsquery('simple', %s)) AS keyword_score
+        FROM {self.postgres_schema}.{self.postgres_table_name} c
+        JOIN {self.postgres_schema}.documents d ON d.id = c.document_id
+        WHERE c.fts_vector @@ websearch_to_tsquery('simple', %s) {where_clause}
+        ORDER BY keyword_score DESC, c.chunk_index ASC
+        LIMIT %s
+        """
+
+        params: List[Any] = [query, query]
+        if filter:
+            params.append(filter_json)
+        params.append(k)
+
+        with self._pool_connection() as conn:
+            rows = conn.execute(sql, params).fetchall()
+
+        documents: List[Document] = []
+        for row in rows:
+            metadata = _sanitize_json(row["metadata"] or {})
+            document_metadata = _sanitize_json(row["document_metadata"] or {})
+            merged_metadata = {
+                **document_metadata,
+                **metadata,
+                "chunk_id": str(row["chunk_id"]),
+                "source_key": row["source_key"],
+                "file_name": row["file_name"],
+                "file_path": row["file_path"],
+                "document_id": str(row["document_id"]),
+                "chunk_index": row["chunk_index"],
+                "page_number": row["page_number"],
+                "keyword_score": float(row.get("keyword_score") or 0.0),
+                "retrieval_method": "keyword",
+            }
+            documents.append(
+                Document(
+                    page_content=row["content"],
+                    metadata=merged_metadata,
+                )
+            )
+
+        return documents
+
     def _postgres_delete_collection(self) -> None:
         self._init_postgres_schema()
 
@@ -852,6 +928,17 @@ class VectorStoreManager:
         if self.backend == "postgres":
             return self._postgres_similarity_search_with_score(query=query, k=k)
         return self.vector_store.similarity_search_with_score(query=query, k=k)
+
+    def keyword_search(
+        self,
+        query: str,
+        k: int = 8,
+        filter: Optional[Dict[str, Any]] = None,
+    ) -> List[Document]:
+        """Search by lexical keyword ranking when the backend supports it."""
+        if self.backend == "postgres":
+            return self._postgres_keyword_search(query=query, k=k, filter=filter)
+        return []
 
     def delete_collection(self):
         """Delete the entire collection."""
