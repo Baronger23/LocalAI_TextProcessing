@@ -29,6 +29,7 @@ from src.config import (
 )
 from src.embeddings import EmbeddingManager
 from src.rag.exceptions import PoolTimeoutError
+from src.security.access_policy import compact_filter_for_chroma
 
 logger = logging.getLogger(__name__)
 
@@ -311,6 +312,56 @@ class VectorStoreManager:
             f"Embedding failed after {self._EMBED_RETRIES} attempts: {last_exc}"
         ) from last_exc
 
+    def _build_access_sql_filter(
+        self,
+        filter: Optional[Dict[str, Any]],
+        chunk_alias: str = "c",
+        document_alias: str = "d",
+    ) -> tuple[str, List[Any]]:
+        """Build SQL predicates for the RBAC metadata filter."""
+        if not filter or filter.get("admin"):
+            return "", []
+
+        clauses: List[str] = []
+        params: List[Any] = []
+        metadata_expr = (
+            f"COALESCE({chunk_alias}.metadata->>%s, {document_alias}.metadata->>%s)"
+        )
+
+        if filter.get("require_verified"):
+            clauses.append(
+                f"COALESCE(({chunk_alias}.metadata->>'metadata_verified')::boolean, "
+                f"({document_alias}.metadata->>'metadata_verified')::boolean, FALSE) = TRUE"
+            )
+
+        departments = list(filter.get("departments") or [])
+        if departments:
+            clauses.append(f"{metadata_expr} = ANY(%s)")
+            params.extend(["department", "department", departments])
+
+        sensitivities = list(filter.get("sensitivities") or [])
+        if sensitivities:
+            clauses.append(f"{metadata_expr} = ANY(%s)")
+            params.extend(["sensitivity", "sensitivity", sensitivities])
+
+        role = str(filter.get("role") or "").strip()
+        if role:
+            allowed_roles_expr = (
+                f"COALESCE({chunk_alias}.metadata->'allowed_roles', "
+                f"{document_alias}.metadata->'allowed_roles')"
+            )
+            clauses.append(
+                f"({allowed_roles_expr} IS NULL OR CASE "
+                f"WHEN jsonb_typeof({allowed_roles_expr}) = 'array' THEN "
+                f"EXISTS (SELECT 1 FROM jsonb_array_elements_text({allowed_roles_expr}) AS allowed_role WHERE allowed_role = %s) "
+                f"ELSE TRUE END)"
+            )
+            params.append(role)
+
+        if not clauses:
+            return "", []
+        return "AND " + " AND ".join(clauses), params
+
     @staticmethod
     def _compute_content_hash(text: str) -> str:
         """SHA256 hash of chunk text for deduplication."""
@@ -559,14 +610,16 @@ class VectorStoreManager:
         _, Vector, _, _ = self._import_postgres_dependencies()
         query_vector = Vector(self.embedding_manager.embed_query(query))
 
-        where_clause_semantic = ""
-        where_clause_keyword = ""
-        filter_json = None
-
-        if filter:
-            where_clause_semantic = "AND c.metadata @> %s::jsonb"
-            where_clause_keyword = "AND c.metadata @> %s::jsonb"
-            filter_json = json.dumps(_sanitize_json(filter))
+        where_clause_semantic, semantic_filter_params = self._build_access_sql_filter(
+            filter,
+            chunk_alias="c",
+            document_alias="d",
+        )
+        where_clause_keyword, keyword_filter_params = self._build_access_sql_filter(
+            filter,
+            chunk_alias="c",
+            document_alias="d",
+        )
 
         sql = f"""
         WITH semantic_search AS (
@@ -633,14 +686,12 @@ class VectorStoreManager:
         final_params = []
         # Semantic CTE parameters
         final_params.extend([query_vector, query_vector])
-        if filter:
-            final_params.append(filter_json)
+        final_params.extend(semantic_filter_params)
         final_params.extend([query_vector, fetch_limit])
 
         # Keyword CTE parameters
         final_params.extend([query, fts_query, query, fts_query, query, fts_query])
-        if filter:
-            final_params.append(filter_json)
+        final_params.extend(keyword_filter_params)
         final_params.append(fetch_limit)
 
         # Final LIMIT — trim to k after RRF scoring
@@ -699,11 +750,11 @@ class VectorStoreManager:
 
         self._init_postgres_schema()
 
-        where_clause = ""
-        filter_json = None
-        if filter:
-            where_clause = "AND c.metadata @> %s::jsonb"
-            filter_json = json.dumps(_sanitize_json(filter))
+        where_clause, filter_params = self._build_access_sql_filter(
+            filter,
+            chunk_alias="c",
+            document_alias="d",
+        )
 
         sql = f"""
         SELECT
@@ -726,8 +777,7 @@ class VectorStoreManager:
         """
 
         params: List[Any] = [query, query]
-        if filter:
-            params.append(filter_json)
+        params.extend(filter_params)
         params.append(k)
 
         with self._pool_connection() as conn:
@@ -917,7 +967,8 @@ class VectorStoreManager:
             return self._postgres_similarity_search(
                 query=query, k=k, filter=filter, keyword_query=keyword_query
             )
-        return self.vector_store.similarity_search(query=query, k=k, filter=filter)
+        chroma_filter = compact_filter_for_chroma(filter)
+        return self.vector_store.similarity_search(query=query, k=k, filter=chroma_filter)
 
     def similarity_search_with_score(
         self,
@@ -960,3 +1011,24 @@ class VectorStoreManager:
             "count": collection.count(),
             "backend": "chroma",
         }
+
+    def get_document_version(self) -> str:
+        """Return a coarse collection version for access-safe answer caching."""
+        if self.backend == "postgres":
+            self._init_postgres_schema()
+            with self._pool_connection() as conn:
+                row = conn.execute(
+                    f"""
+                    SELECT
+                        COUNT(*) AS chunk_count,
+                        COALESCE(MAX(c.updated_at), MAX(d.updated_at)) AS updated_at
+                    FROM {self.postgres_schema}.{self.postgres_table_name} c
+                    JOIN {self.postgres_schema}.documents d ON d.id = c.document_id
+                    """
+                ).fetchone()
+            if not row:
+                return "postgres:0:none"
+            return f"postgres:{int(row['chunk_count'] or 0)}:{row['updated_at'] or 'none'}"
+
+        collection = self.vector_store._collection
+        return f"chroma:{collection.count()}"

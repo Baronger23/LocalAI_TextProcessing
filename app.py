@@ -20,6 +20,14 @@ logging.basicConfig(
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.rag import RAGPipeline
+from src.security import (
+    ACCESS_DENIED_MESSAGE,
+    build_access_filter,
+    check_question_permission,
+    classify_question_category,
+    normalize_department,
+    normalize_role,
+)
 from src.storage import ChatStore
 
 
@@ -542,6 +550,15 @@ def main():
     if "auth_user_email" not in st.session_state:
         st.session_state.auth_user_email = ""
 
+    if "auth_user_role" not in st.session_state:
+        st.session_state.auth_user_role = "Employee"
+
+    if "auth_department" not in st.session_state:
+        st.session_state.auth_department = "general"
+
+    if "auth_department_id" not in st.session_state:
+        st.session_state.auth_department_id = None
+
     if "current_conversation_id" not in st.session_state:
         st.session_state.current_conversation_id = None
 
@@ -571,6 +588,9 @@ def main():
                     if user:
                         st.session_state.auth_user_id = user["id"]
                         st.session_state.auth_user_email = user["email"]
+                        st.session_state.auth_user_role = normalize_role(user.get("role"))
+                        st.session_state.auth_department = normalize_department(user.get("department"))
+                        st.session_state.auth_department_id = user.get("department_id")
                         st.session_state.messages = []
                         st.session_state.current_conversation_id = None
                         st.session_state.chat_started = False
@@ -592,6 +612,9 @@ def main():
                             user_id = store.register_user(register_email, register_password)
                             st.session_state.auth_user_id = user_id
                             st.session_state.auth_user_email = register_email.strip().lower()
+                            st.session_state.auth_user_role = "Employee"
+                            st.session_state.auth_department = "general"
+                            st.session_state.auth_department_id = None
                             st.session_state.messages = []
                             st.session_state.current_conversation_id = None
                             st.session_state.chat_started = False
@@ -606,6 +629,9 @@ def main():
             st.info("Đăng nhập để xem và lưu lịch sử chat theo từng tài khoản.")
         else:
             st.caption(f"Đăng nhập: {st.session_state.auth_user_email}")
+            st.caption(
+                f"Role: {st.session_state.auth_user_role} | Department: {st.session_state.auth_department}"
+            )
             col_auth_1, col_auth_2 = st.columns(2)
             with col_auth_1:
                 if st.button("➕ New chat", use_container_width=True, type="primary"):
@@ -619,6 +645,9 @@ def main():
                     store.log_audit(st.session_state.auth_user_id, "logout", "User logout")
                     st.session_state.auth_user_id = None
                     st.session_state.auth_user_email = ""
+                    st.session_state.auth_user_role = "Employee"
+                    st.session_state.auth_department = "general"
+                    st.session_state.auth_department_id = None
                     st.session_state.current_conversation_id = None
                     st.session_state.messages = []
                     st.session_state.chat_started = False
@@ -634,26 +663,82 @@ def main():
             # RAG document upload
             st.markdown("")
             with st.expander("📁 Upload tài liệu"):
-                uploaded_files = st.file_uploader(
-                    "Kéo thả files vào đây",
-                    type=["pdf", "txt", "docx"],
-                    accept_multiple_files=True,
-                    label_visibility="collapsed"
-                )
+                upload_allowed = st.session_state.auth_user_role in {"Admin", "Manager"}
+                if not upload_allowed:
+                    st.info("Chỉ Admin hoặc Manager được upload tài liệu.")
+                    uploaded_files = []
+                else:
+                    department_options = ["general", "finance", "hr", "it", "legal", "security"]
+                    if st.session_state.auth_user_role == "Manager":
+                        department_options = sorted({"general", st.session_state.auth_department})
+                    doc_department = st.selectbox(
+                        "Department",
+                        department_options,
+                        index=0,
+                    )
+                    doc_sensitivity = st.selectbox(
+                        "Sensitivity",
+                        ["public", "internal", "confidential", "restricted"],
+                        index=1,
+                    )
+                    allowed_role_options = ["Admin", "Manager", "Employee"]
+                    default_allowed = ["Admin", "Manager"]
+                    if doc_sensitivity in {"public", "internal"}:
+                        default_allowed.append("Employee")
+                    doc_allowed_roles = st.multiselect(
+                        "Allowed roles",
+                        allowed_role_options,
+                        default=default_allowed,
+                    )
+                    uploaded_files = st.file_uploader(
+                        "Kéo thả files vào đây",
+                        type=["pdf", "txt", "docx"],
+                        accept_multiple_files=True,
+                        label_visibility="collapsed"
+                    )
 
                 if uploaded_files:
                     if st.button("📤 Tải lên", use_container_width=True):
                         with st.spinner("Đang xử lý..."):
                             upload_dir = Path("data/raw")
                             upload_dir.mkdir(parents=True, exist_ok=True)
+                            if not doc_allowed_roles:
+                                st.error("Phải chọn ít nhất một role được phép đọc tài liệu.")
+                                st.stop()
 
                             for file in uploaded_files:
                                 file_path = upload_dir / file.name
                                 with open(file_path, "wb") as f:
                                     f.write(file.getbuffer())
 
+                            upload_metadata = {
+                                "department": doc_department,
+                                "sensitivity": doc_sensitivity,
+                                "allowed_roles": doc_allowed_roles,
+                                "metadata_verified": True,
+                                "uploaded_by": st.session_state.auth_user_id,
+                            }
                             rag = init_rag()
-                            count = rag.load_documents(str(upload_dir))
+                            count = 0
+                            for file in uploaded_files:
+                                file_path = upload_dir / file.name
+                                count += rag.load_documents(
+                                    str(file_path),
+                                    is_directory=False,
+                                    metadata=upload_metadata,
+                                )
+                            rag.clear_cache()
+                            store.log_audit(
+                                st.session_state.auth_user_id,
+                                "document_upload",
+                                {
+                                    "file_count": len(uploaded_files),
+                                    "chunks": count,
+                                    "department": doc_department,
+                                    "sensitivity": doc_sensitivity,
+                                    "allowed_roles": doc_allowed_roles,
+                                },
+                            )
                             print(f"[INGESTION_DEBUG] Final result: {count} chunks loaded")
                             st.success(f"✅ Đã tải {count} chunks!")
 
@@ -752,6 +837,16 @@ def main():
     # Chat input
     if prompt := st.chat_input("Nhập tin nhắn..."):
         st.session_state.chat_started = True
+        question_category = classify_question_category(prompt)
+        access_filter = build_access_filter(
+            st.session_state.auth_user_role,
+            st.session_state.auth_department,
+        )
+        question_allowed = check_question_permission(
+            st.session_state.auth_user_role,
+            st.session_state.auth_department,
+            question_category,
+        )
 
         if not st.session_state.current_conversation_id:
             conversation_title = (prompt.strip()[:50] + "...") if len(prompt.strip()) > 50 else prompt.strip()
@@ -779,6 +874,31 @@ def main():
 
         with st.chat_message("assistant", avatar="🤖"):
             message_placeholder = st.empty()
+            if not question_allowed:
+                response = ACCESS_DENIED_MESSAGE
+                message_placeholder.markdown(response)
+                store.log_audit(
+                    st.session_state.auth_user_id,
+                    "question_denied",
+                    {
+                        "role": st.session_state.auth_user_role,
+                        "department": st.session_state.auth_department,
+                        "category": question_category,
+                        "question_preview": prompt[:160],
+                    },
+                )
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": response,
+                })
+                store.append_message(
+                    user_id=st.session_state.auth_user_id,
+                    conversation_id=st.session_state.current_conversation_id,
+                    role="assistant",
+                    content=response,
+                    sources=None,
+                )
+                return
             
             try:
                 rag = init_rag()
@@ -802,6 +922,7 @@ def main():
                             system_prompt=system_prompt,
                             chat_history=st.session_state.messages[:-1],
                             on_complete=stream_result.update,
+                            access_filter=access_filter,
                         ):
                             displayed_text += token
                             message_placeholder.markdown(displayed_text + "▌")
@@ -815,6 +936,7 @@ def main():
                             prompt,
                             system_prompt=system_prompt,
                             chat_history=st.session_state.messages[:-1],
+                            access_filter=access_filter,
                         )
                         response = result["answer"]
                         sources = result.get("sources", [])
@@ -825,6 +947,7 @@ def main():
                         prompt,
                         system_prompt=system_prompt,
                         chat_history=st.session_state.messages[:-1],
+                        access_filter=access_filter,
                     )
                     response = result["answer"]
                     sources = result.get("sources", [])
@@ -832,6 +955,22 @@ def main():
                 
                 if sources:
                     render_sources(sources)
+                store.log_audit(
+                    st.session_state.auth_user_id,
+                    "question_allowed",
+                    {
+                        "role": st.session_state.auth_user_role,
+                        "department": st.session_state.auth_department,
+                        "category": question_category,
+                        "question_preview": prompt[:160],
+                        "retrieved_chunk_ids": [
+                            str((source.get("metadata") or {}).get("chunk_id")
+                                or (source.get("metadata") or {}).get("document_id")
+                                or "")
+                            for source in sources[:20]
+                        ],
+                    },
+                )
                 
                 st.session_state.messages.append({
                     "role": "assistant",

@@ -44,6 +44,7 @@ from src.rag.models import FusedLLMResponse, TimingBreakdown
 from src.rag.post_response_executor import PostResponseTaskExecutor
 from src.rag.query_cache import QueryCache
 from src.rag.vector_store import VectorStoreManager
+from src.security import NO_AUTHORIZED_CONTEXT_MESSAGE, document_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +148,12 @@ class RAGPipeline:
     # Document loading
     # ------------------------------------------------------------------
 
-    def load_documents(self, source: str, is_directory: bool = True) -> int:
+    def load_documents(
+        self,
+        source: str,
+        is_directory: bool = True,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> int:
         """Load documents into the vector store."""
         documents = self.document_processor.process_documents(
             source=source,
@@ -156,6 +162,12 @@ class RAGPipeline:
         if not documents:
             print("No documents found to load.")
             return 0
+        if metadata:
+            safe_metadata = dict(metadata)
+            for document in documents:
+                merged = dict(document.metadata or {})
+                merged.update(safe_metadata)
+                document.metadata = merged
         self.vector_store_manager.add_documents(documents)
         print(f"Successfully loaded {len(documents)} document chunks.")
         return len(documents)
@@ -324,7 +336,12 @@ class RAGPipeline:
             queries.append("vai trò chủ thể quan hệ quốc tế chịu ảnh hưởng")
         return [query for query in dict.fromkeys(q for q in queries if q)]
 
-    def _keyword_supplement_search(self, question: str, mode: str) -> List[Document]:
+    def _keyword_supplement_search(
+        self,
+        question: str,
+        mode: str,
+        access_filter: Optional[Dict[str, Any]] = None,
+    ) -> List[Document]:
         """Run keyword-only retrieval for broad queries when supported."""
         if not self.keyword_supplement_enabled or mode != "broad":
             return []
@@ -335,12 +352,27 @@ class RAGPipeline:
         results: List[Document] = []
         for keyword_query in self._build_keyword_supplement_queries(question):
             try:
-                docs = keyword_search(query=keyword_query, k=self.keyword_supplement_top_k)
+                docs = keyword_search(
+                    query=keyword_query,
+                    k=self.keyword_supplement_top_k,
+                    filter=access_filter,
+                )
             except Exception:
                 logger.exception("[pipeline] Keyword supplement failed for %r", keyword_query)
                 continue
             results = self._merge_documents(results, docs)
         return results
+
+    @staticmethod
+    def _filter_authorized_documents(
+        docs: List[Document],
+        access_filter: Optional[Dict[str, Any]],
+    ) -> List[Document]:
+        return [
+            doc
+            for doc in docs
+            if document_allowed(dict(doc.metadata or {}), access_filter)
+        ]
 
     # ------------------------------------------------------------------
     # Core query method
@@ -352,6 +384,7 @@ class RAGPipeline:
         k: Optional[int] = None,
         system_prompt: Optional[str] = None,
         chat_history: Optional[List[Dict[str, Any]]] = None,
+        access_filter: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Query the RAG system and return a complete response dict.
 
@@ -373,13 +406,25 @@ class RAGPipeline:
         # ----------------------------------------------------------
         # Step 1 — Cache lookup
         # ----------------------------------------------------------
+        document_version = str(self.vector_store_manager.get_document_version())
         cache_key = self.query_cache.make_key(
             query=question,
             top_k=top_k,
-            filters=None,
+            filters={
+                "access_filter": access_filter,
+                "document_version": document_version,
+            },
             model_version=self.llm_manager.model,
         )
         cached = self.query_cache.get(cache_key)
+        if cached is None and access_filter is None:
+            legacy_cache_key = self.query_cache.make_key(
+                query=question,
+                top_k=top_k,
+                filters=None,
+                model_version=self.llm_manager.model,
+            )
+            cached = self.query_cache.get(legacy_cache_key)
         if cached is not None:
             logger.debug("[pipeline] Cache HIT for query: %r", question[:60])
             # Inject fresh timing showing it was a cache hit
@@ -406,13 +451,30 @@ class RAGPipeline:
                 query=question,
                 keyword_query=question,
                 k=top_k,
+                filter=access_filter,
             )
-            keyword_docs = self._keyword_supplement_search(question, query_mode)
+            keyword_docs = self._keyword_supplement_search(
+                question,
+                query_mode,
+                access_filter=access_filter,
+            )
             if query_mode == "broad":
                 relevant_docs = self._merge_documents(keyword_docs, relevant_docs)
             else:
                 relevant_docs = self._merge_documents(relevant_docs, keyword_docs)
+            relevant_docs = self._filter_authorized_documents(relevant_docs, access_filter)
         timings["search_ms"] = t_search.elapsed_ms
+
+        if access_filter and not relevant_docs:
+            total_ms = (time.perf_counter() - total_start) * 1_000.0
+            timings["total_ms"] = total_ms
+            return {
+                "answer": NO_AUTHORIZED_CONTEXT_MESSAGE,
+                "sources": [],
+                "context": "",
+                "rewritten_query": None,
+                "timing": self.benchmark.build_timing_dict(timings),
+            }
 
         if not relevant_docs:
             total_ms = (time.perf_counter() - total_start) * 1_000.0
@@ -430,6 +492,16 @@ class RAGPipeline:
         # ----------------------------------------------------------
         packed_docs = self._select_context_documents(relevant_docs, query_mode)
         context = self._build_context(packed_docs, query_mode)
+        if not packed_docs or not context.strip():
+            total_ms = (time.perf_counter() - total_start) * 1_000.0
+            timings["total_ms"] = total_ms
+            return {
+                "answer": NO_AUTHORIZED_CONTEXT_MESSAGE,
+                "sources": [],
+                "context": "",
+                "rewritten_query": None,
+                "timing": self.benchmark.build_timing_dict(timings),
+            }
 
         # Debug: log context summary so we can verify what the LLM receives
         logger.info(
@@ -545,6 +617,7 @@ class RAGPipeline:
         system_prompt: Optional[str] = None,
         chat_history: Optional[List[Dict[str, Any]]] = None,
         on_complete: Optional[Callable[[Dict[str, Any]], None]] = None,
+        access_filter: Optional[Dict[str, Any]] = None,
     ) -> Generator[str, None, None]:
         """Stream the LLM answer token by token.
 
@@ -562,13 +635,25 @@ class RAGPipeline:
         top_k = self._resolve_top_k(question, k)
 
         # Cache lookup
+        document_version = str(self.vector_store_manager.get_document_version())
         cache_key = self.query_cache.make_key(
             query=question,
             top_k=top_k,
-            filters=None,
+            filters={
+                "access_filter": access_filter,
+                "document_version": document_version,
+            },
             model_version=self.llm_manager.model,
         )
         cached = self.query_cache.get(cache_key)
+        if cached is None and access_filter is None:
+            legacy_cache_key = self.query_cache.make_key(
+                query=question,
+                top_k=top_k,
+                filters=None,
+                model_version=self.llm_manager.model,
+            )
+            cached = self.query_cache.get(legacy_cache_key)
         if cached is not None:
             logger.debug("[pipeline] Stream cache HIT for query: %r", question[:60])
             self._notify_stream_complete(on_complete, cached)
@@ -581,12 +666,30 @@ class RAGPipeline:
             query=question,
             keyword_query=question,
             k=top_k,
+            filter=access_filter,
         )
-        keyword_docs = self._keyword_supplement_search(question, query_mode)
+        keyword_docs = self._keyword_supplement_search(
+            question,
+            query_mode,
+            access_filter=access_filter,
+        )
         if query_mode == "broad":
             relevant_docs = self._merge_documents(keyword_docs, relevant_docs)
         else:
             relevant_docs = self._merge_documents(relevant_docs, keyword_docs)
+        relevant_docs = self._filter_authorized_documents(relevant_docs, access_filter)
+        if access_filter and not relevant_docs:
+            total_ms = (time.perf_counter() - total_start) * 1_000.0
+            no_docs_response = {
+                "answer": NO_AUTHORIZED_CONTEXT_MESSAGE,
+                "sources": [],
+                "context": "",
+                "rewritten_query": None,
+                "timing": self.benchmark.build_timing_dict({"total_ms": total_ms}),
+            }
+            self._notify_stream_complete(on_complete, no_docs_response)
+            yield no_docs_response["answer"]
+            return
         if not relevant_docs:
             total_ms = (time.perf_counter() - total_start) * 1_000.0
             no_docs_response = {
@@ -603,6 +706,18 @@ class RAGPipeline:
         # Build context
         packed_docs = self._select_context_documents(relevant_docs, query_mode)
         context = self._build_context(packed_docs, query_mode)
+        if not packed_docs or not context.strip():
+            total_ms = (time.perf_counter() - total_start) * 1_000.0
+            no_context_response = {
+                "answer": NO_AUTHORIZED_CONTEXT_MESSAGE,
+                "sources": [],
+                "context": "",
+                "rewritten_query": None,
+                "timing": self.benchmark.build_timing_dict({"total_ms": total_ms}),
+            }
+            self._notify_stream_complete(on_complete, no_context_response)
+            yield no_context_response["answer"]
+            return
 
         # Stream from LLM
         ttft_recorded = False

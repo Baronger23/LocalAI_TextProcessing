@@ -107,9 +107,17 @@ class ChatStore:
         def _op(conn: psycopg.Connection):
             return conn.execute(
                 """
-                SELECT id, email, hashed_password, is_active
-                FROM users
-                WHERE email = %s
+                SELECT
+                    u.id,
+                    u.email,
+                    u.hashed_password,
+                    u.is_active,
+                    u.role,
+                    u.department_id,
+                    d.name AS department
+                FROM users u
+                LEFT JOIN departments d ON d.id = u.department_id
+                WHERE u.email = %s
                 """,
                 (normalized_email,),
             ).fetchone()
@@ -128,7 +136,13 @@ class ChatStore:
         if not hmac.compare_digest(candidate_hash, stored_hash):
             return None
 
-        user = {"id": str(row["id"]), "email": row["email"]}
+        user = {
+            "id": str(row["id"]),
+            "email": row["email"],
+            "role": row.get("role") or "Employee",
+            "department_id": str(row["department_id"]) if row.get("department_id") else None,
+            "department": row.get("department") or "general",
+        }
         self.log_audit(user["id"], "login", {"message": "Login success"})
         return user
 
