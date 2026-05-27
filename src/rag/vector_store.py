@@ -94,6 +94,9 @@ class VectorStoreManager:
         self.pool_min_size = pool_min_size
         self.pool_max_size = pool_max_size
         self.search_result_buffer = search_result_buffer
+        self._content_hash_index_name = (
+            f"uq_{''.join(ch if ch.isalnum() else '_' for ch in self.postgres_table_name)}_content_hash"
+        )
 
         self._chroma_store: Chroma | None = None
         self._postgres_ready = False
@@ -268,8 +271,7 @@ class VectorStoreManager:
         CREATE INDEX IF NOT EXISTS idx_document_chunks_metadata ON {self.postgres_schema}.{self.postgres_table_name} USING gin (metadata);
         CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding ON {self.postgres_schema}.{self.postgres_table_name} USING hnsw (embedding vector_cosine_ops);
         CREATE INDEX IF NOT EXISTS idx_document_chunks_fts ON {self.postgres_schema}.{self.postgres_table_name} USING gin(fts_vector);
-        DROP INDEX IF EXISTS {self.postgres_schema}.uq_chunks_content_hash;
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_chunks_content_hash ON {self.postgres_schema}.{self.postgres_table_name}(content_hash);
+        CREATE UNIQUE INDEX IF NOT EXISTS {self._content_hash_index_name} ON {self.postgres_schema}.{self.postgres_table_name}(content_hash);
         """
 
         with self._get_postgres_connection() as conn:
@@ -813,8 +815,29 @@ class VectorStoreManager:
         self._init_postgres_schema()
 
         with self._pool_connection() as conn:
-            conn.execute(f"DELETE FROM {self.postgres_schema}.{self.postgres_table_name}")
-            conn.execute(f"DELETE FROM {self.postgres_schema}.documents")
+            deleted_rows = conn.execute(
+                f"""
+                DELETE FROM {self.postgres_schema}.{self.postgres_table_name}
+                RETURNING document_id
+                """
+            ).fetchall()
+            document_ids = [row["document_id"] for row in deleted_rows]
+            if not document_ids:
+                return
+
+            placeholders = ",".join(["%s"] * len(document_ids))
+            conn.execute(
+                f"""
+                DELETE FROM {self.postgres_schema}.documents d
+                WHERE d.id IN ({placeholders})
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM {self.postgres_schema}.{POSTGRES_VECTOR_TABLE} c
+                      WHERE c.document_id = d.id
+                  )
+                """,
+                document_ids,
+            )
 
     def _postgres_collection_stats(self) -> Dict[str, Any]:
         self._init_postgres_schema()

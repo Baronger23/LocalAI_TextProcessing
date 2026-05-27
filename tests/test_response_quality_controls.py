@@ -69,8 +69,7 @@ class TestAdaptiveTopK:
 
         rag.query("Phân tích các công trình lý luận về vai trò")
 
-        rag.vector_store_manager.similarity_search.assert_called_once()
-        assert rag.vector_store_manager.similarity_search.call_args.kwargs["k"] == BROAD_QUERY_TOP_K
+        assert rag.vector_store_manager.similarity_search.call_args_list[0].kwargs["k"] == BROAD_QUERY_TOP_K
 
     def test_focused_query_uses_default_top_k_when_unspecified(self):
         rag = _mock_pipeline()
@@ -85,8 +84,7 @@ class TestAdaptiveTopK:
 
         rag.query("Phân tích các công trình lý luận về vai trò", k=5)
 
-        rag.vector_store_manager.similarity_search.assert_called_once()
-        assert rag.vector_store_manager.similarity_search.call_args.kwargs["k"] == 5
+        assert rag.vector_store_manager.similarity_search.call_args_list[0].kwargs["k"] == 5
 
 
 class TestKeywordSupplement:
@@ -107,6 +105,140 @@ class TestKeywordSupplement:
         rag.query("ASEAN thành lập năm nào?")
 
         rag.vector_store_manager.keyword_search.assert_not_called()
+
+
+class TestBroadQueryDecomposition:
+    @staticmethod
+    def _outline_doc() -> Document:
+        return Document(
+            page_content=(
+                "Các mục chính trong tài liệu:\n"
+                "- Các công trình liên quan đến vai trò chủ thể quan hệ quốc tế chịu ảnh hưởng của Chủ nghĩa Hiện thực\n"
+                "- Các công trình liên quan đến vai trò chủ thể quan hệ quốc tế chịu ảnh hưởng của Chủ nghĩa Tự do\n"
+                "- Các công trình liên quan đến vai trò chủ thể quan hệ quốc tế chịu ảnh hưởng của Chủ nghĩa Kiến tạo\n"
+                "- Các công trình liên quan đến vai trò chủ thể quan hệ quốc tế chịu ảnh hưởng của Lý thuyết Vai trò (Role theory)\n"
+                "- Các công trình liên quan đến vai trò chủ thể quan hệ quốc tế chịu ảnh hưởng của Phân tích Mạng lưới Xã hội (SNA)\n"
+            ),
+            metadata={
+                "source": "outline.pdf",
+                "file_name": "outline.pdf",
+                "chunk_type": "outline",
+                "section_title": "Tổng quan các mục chính",
+                "chunk_index": 0,
+            },
+        )
+
+    def test_broad_query_decomposes_from_retrieved_document_headings(self):
+        facets = RAGPipeline.decompose_broad_query(
+            "Các công trình lý luận về vai trò trong quan hệ quốc tế",
+            seed_docs=[self._outline_doc()],
+        )
+
+        labels = [facet["label"] for facet in facets]
+        assert labels == [
+            "Các công trình liên quan đến vai trò chủ thể quan hệ quốc tế chịu ảnh hưởng của Chủ nghĩa Hiện thực",
+            "Các công trình liên quan đến vai trò chủ thể quan hệ quốc tế chịu ảnh hưởng của Chủ nghĩa Tự do",
+            "Các công trình liên quan đến vai trò chủ thể quan hệ quốc tế chịu ảnh hưởng của Chủ nghĩa Kiến tạo",
+            "Các công trình liên quan đến vai trò chủ thể quan hệ quốc tế chịu ảnh hưởng của Lý thuyết Vai trò (Role theory)",
+            "Các công trình liên quan đến vai trò chủ thể quan hệ quốc tế chịu ảnh hưởng của Phân tích Mạng lưới Xã hội (SNA)",
+        ]
+
+    def test_broad_query_does_not_decompose_without_document_headings(self):
+        facets = RAGPipeline.decompose_broad_query(
+            "Các công trình lý luận về vai trò trong quan hệ quốc tế"
+        )
+
+        assert facets == []
+
+    def test_decomposed_retrieval_fetches_each_facet_without_canned_answer(self):
+        outline_doc = self._outline_doc()
+        rag = _mock_pipeline([outline_doc])
+
+        def section_doc(label: str, source: str) -> Document:
+            doc = _doc(f"Nội dung của {label}", source, 1)
+            doc.metadata["section_title"] = label
+            return doc
+
+        facets = RAGPipeline.decompose_broad_query(
+            "Các công trình lý luận về vai trò trong quan hệ quốc tế",
+            seed_docs=[outline_doc],
+        )
+        rag.vector_store_manager.similarity_search.side_effect = [
+            [outline_doc],
+            *[[section_doc(facet["label"], f"facet-{index}.pdf")] for index, facet in enumerate(facets)],
+        ]
+
+        result = rag.query("Các công trình lý luận về vai trò trong quan hệ quốc tế")
+
+        queries = [
+            call.kwargs["query"]
+            for call in rag.vector_store_manager.similarity_search.call_args_list
+        ]
+        assert queries[0] == "Các công trình lý luận về vai trò trong quan hệ quốc tế"
+        for facet in facets:
+            assert facet["query"] in queries[1:]
+            assert f"[GROUP: {facet['label']}]" in result["context"]
+
+    def test_decomposed_retrieval_drops_wrong_section_matches(self):
+        outline_doc = self._outline_doc()
+        facets = RAGPipeline.decompose_broad_query(
+            "Các công trình lý luận về vai trò trong quan hệ quốc tế",
+            seed_docs=[outline_doc],
+        )
+        target_label = facets[1]["label"]
+        wrong_label = facets[-1]["label"]
+        target_seed_doc = Document(
+            page_content=f"- {target_label}",
+            metadata={
+                "source": "outline.pdf",
+                "file_name": "outline.pdf",
+                "chunk_type": "outline",
+                "section_title": "Tổng quan các mục chính",
+                "chunk_index": 0,
+            },
+        )
+        rag = _mock_pipeline()
+        wrong_doc = _doc("Nội dung có nhắc tự do nhưng section là SNA", "sna.pdf", 1)
+        wrong_doc.metadata["section_title"] = wrong_label
+
+        rag.vector_store_manager.similarity_search.return_value = [wrong_doc]
+        rag.vector_store_manager.keyword_search.return_value = []
+
+        docs = rag._decomposed_broad_search(
+            target_label,
+            "broad",
+            seed_docs=[target_seed_doc],
+        )
+
+        assert docs == []
+
+
+class TestContextualQueryRewrite:
+    def test_clear_question_skips_contextual_rewrite(self):
+        rag = _mock_pipeline([_doc("ASEAN thành lập năm 1967.", "asean.pdf", 1)])
+
+        rag.query(
+            "ASEAN thành lập năm nào?",
+            chat_history=[{"role": "user", "content": "Trước đó hỏi về con chó"}],
+        )
+
+        rag.llm_manager.invoke.assert_not_called()
+        assert rag.vector_store_manager.similarity_search.call_args.kwargs["query"] == "ASEAN thành lập năm nào?"
+
+    def test_follow_up_question_uses_rewritten_query_for_retrieval(self):
+        rag = _mock_pipeline([_doc("Chó là vật nuôi phổ biến.", "dog.pdf", 1)])
+        rag.llm_manager.invoke.return_value = "Con chó có phải là vật nuôi phổ biến không?"
+
+        result = rag.query(
+            "nó có phải là vật nuôi phổ biến không?",
+            chat_history=[
+                {"role": "user", "content": "Con chó là con gì?"},
+                {"role": "assistant", "content": "Chó là một loài động vật được con người nuôi."},
+            ],
+        )
+
+        assert rag.vector_store_manager.similarity_search.call_args.kwargs["query"] == "Con chó có phải là vật nuôi phổ biến không?"
+        assert result["rewritten_query"] == "Con chó có phải là vật nuôi phổ biến không?"
 
 
 class TestStreamingMetadata:

@@ -13,7 +13,9 @@ Retrieval flow (optimised):
 from __future__ import annotations
 
 import logging
+import re
 import time
+import unicodedata
 from typing import Any, Callable, Dict, Generator, List, Optional
 
 from langchain_core.documents import Document
@@ -65,6 +67,37 @@ _BROAD_QUERY_KEYWORDS = (
     "đánh giá",
     "danh gia",
 )
+
+_FOLLOW_UP_MARKERS = (
+    "nó",
+    "cái đó",
+    "cai do",
+    "cái này",
+    "cai nay",
+    "điều đó",
+    "dieu do",
+    "điều này",
+    "dieu nay",
+    "vấn đề đó",
+    "van de do",
+    "vấn đề này",
+    "van de nay",
+    "ở trên",
+    "o tren",
+    "vừa rồi",
+    "vua roi",
+    "họ",
+    "chúng",
+    "chung",
+)
+
+_FOLLOW_UP_TOKEN_MARKERS = {"no", "ho"}
+
+_HEADING_STOPWORDS = {
+    "cac", "cong", "trinh", "lien", "quan", "den", "ve", "vai", "tro",
+    "chu", "the", "quoc", "te", "anh", "huong", "cua", "trong", "ly",
+    "luan", "nhung", "mot", "so", "va", "hoac", "duoc", "tu", "sau",
+}
 
 # System prompt used exclusively for the classic (non-fused) query rewriting step.
 _REWRITE_SYSTEM_PROMPT = (
@@ -193,6 +226,77 @@ class RAGPipeline:
         except Exception:
             return question
 
+    @staticmethod
+    def _needs_contextual_rewrite(
+        question: str,
+        chat_history: Optional[List[Dict[str, Any]]],
+    ) -> bool:
+        """Return True when a question likely depends on recent dialogue."""
+        if not chat_history:
+            return False
+        normalized = " ".join((question or "").lower().split())
+        if not normalized:
+            return False
+        if any(marker in normalized for marker in _FOLLOW_UP_MARKERS):
+            return True
+        tokens = set(normalized.replace("?", " ").replace(".", " ").split())
+        return bool(tokens & _FOLLOW_UP_TOKEN_MARKERS)
+
+    @staticmethod
+    def _format_rewrite_history(chat_history: Optional[List[Dict[str, Any]]]) -> str:
+        """Format only the last few turns for contextual query rewriting."""
+        if not chat_history:
+            return ""
+        lines: List[str] = []
+        for msg in chat_history[-4:]:
+            role = "User" if msg.get("role") == "user" else "Assistant"
+            content = str(msg.get("content", "")).strip()
+            if content:
+                lines.append(f"{role}: {content[:700]}")
+        return "\n".join(lines)
+
+    def contextualize_question(
+        self,
+        question: str,
+        chat_history: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
+        """Rewrite vague follow-up questions into standalone retrieval queries.
+
+        The gate is intentionally conservative so ordinary standalone questions
+        do not pay an extra LLM call.
+        """
+        original = (question or "").strip()
+        if not self._needs_contextual_rewrite(original, chat_history):
+            return original
+
+        history_text = self._format_rewrite_history(chat_history)
+        if not history_text:
+            return original
+
+        prompt = f"""Viết lại câu hỏi hiện tại thành một câu hỏi độc lập để tìm kiếm tài liệu.
+Chỉ dựa vào lịch sử hội thoại gần nhất. Không trả lời câu hỏi. Không thêm thông tin mới.
+Nếu câu hỏi đã rõ nghĩa, trả lại y nguyên.
+
+Lịch sử gần nhất:
+{history_text}
+
+Câu hỏi hiện tại:
+{original}
+
+Câu hỏi độc lập:"""
+
+        try:
+            rewritten = self.llm_manager.invoke(prompt).strip()
+        except Exception:
+            return original
+
+        rewritten = rewritten.strip().strip('"').strip("'")
+        if not rewritten:
+            return original
+        if len(rewritten) > max(400, len(original) * 6):
+            return original
+        return rewritten
+
     # ------------------------------------------------------------------
     # Response quality helpers
     # ------------------------------------------------------------------
@@ -210,12 +314,161 @@ class RAGPipeline:
         """Normalize chunk text for duplicate detection."""
         return " ".join((text or "").lower().split())
 
+    @staticmethod
+    def _normalize_query_text(text: str) -> str:
+        """Normalize Vietnamese-ish query text for lightweight matching."""
+        lowered = (text or "").lower().replace("đ", "d")
+        folded = "".join(
+            ch
+            for ch in unicodedata.normalize("NFD", lowered)
+            if unicodedata.category(ch) != "Mn"
+        )
+        return " ".join(folded.split())
+
     def _resolve_top_k(self, question: str, k: Optional[int]) -> int:
         """Return explicit k or choose an adaptive default from query mode."""
         if k is not None:
             return k
         mode = self.classify_query_mode(question)
         return BROAD_QUERY_TOP_K if mode == "broad" else DEFAULT_TOP_K
+
+    @classmethod
+    def _heading_tokens(cls, text: str) -> set[str]:
+        normalized = cls._normalize_query_text(text)
+        return {
+            token for token in re.findall(r"[a-z0-9]+", normalized)
+            if len(token) >= 3 and token not in _HEADING_STOPWORDS
+        }
+
+    @classmethod
+    def _heading_relevance(cls, question: str, heading: str) -> int:
+        query_tokens = cls._heading_tokens(question)
+        heading_tokens = cls._heading_tokens(heading)
+        if not query_tokens or not heading_tokens:
+            return 0
+        return len(query_tokens & heading_tokens)
+
+    @staticmethod
+    def _clean_heading(text: str) -> str:
+        heading = re.sub(r"^\s*[-•\uf0b7\d.)]+", "", text or "").strip()
+        heading = re.sub(r"^\s*mục\s*:\s*", "", heading, flags=re.IGNORECASE)
+        heading = re.sub(r"\s+", " ", heading)
+        return heading[:240]
+
+    @classmethod
+    def _is_decomposition_heading(cls, heading: str) -> bool:
+        normalized = cls._normalize_query_text(heading)
+        if not normalized or normalized.startswith("chuong "):
+            return False
+        return (
+            "chiu anh huong" in normalized
+            or ("cac cong trinh" in normalized and "lien quan den" in normalized)
+        )
+
+    @classmethod
+    def _extract_candidate_headings(cls, doc: Document) -> List[str]:
+        metadata = doc.metadata or {}
+        candidates: List[str] = []
+
+        for key in ("section_title", "outline_path", "chapter_title", "breadcrumb"):
+            value = str(metadata.get(key) or "").strip()
+            if value and value.lower() not in {"tổng quan các mục chính", "tong quan cac muc chinh"}:
+                candidates.extend(part.strip() for part in value.split(">") if part.strip())
+
+        for line in str(doc.page_content or "").splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith(("-", "•")):
+                candidates.append(stripped)
+            elif "các công trình" in stripped.lower() or "chịu ảnh hưởng" in stripped.lower():
+                candidates.append(stripped)
+
+        cleaned: List[str] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            heading = cls._clean_heading(candidate)
+            normalized = cls._normalize_query_text(heading)
+            if len(heading) < 12 or normalized in seen:
+                continue
+            seen.add(normalized)
+            cleaned.append(heading)
+        return cleaned
+
+    @classmethod
+    def decompose_broad_query(
+        cls,
+        question: str,
+        seed_docs: Optional[List[Document]] = None,
+        max_facets: int = 8,
+    ) -> List[Dict[str, str]]:
+        """Build retrieval facets from outline/heading chunks already found.
+
+        This is intentionally data-driven: headings come from retrieved document
+        metadata/content, not a fixed domain list.
+        """
+        if not seed_docs:
+            return []
+
+        ranked: List[tuple[int, int, str]] = []
+        order = 0
+        for doc in seed_docs:
+            metadata = doc.metadata or {}
+            chunk_type = str(metadata.get("chunk_type") or "").lower()
+            heading_bonus = 2 if chunk_type == "outline" else 0
+            for heading in cls._extract_candidate_headings(doc):
+                relevance = cls._heading_relevance(question, heading)
+                decomposition_bonus = 4 if cls._is_decomposition_heading(heading) else 0
+                if relevance <= 0 and not decomposition_bonus:
+                    continue
+                ranked.append((max(relevance, 1) + heading_bonus + decomposition_bonus, order, heading))
+                order += 1
+
+        ranked.sort(key=lambda item: (-item[0], item[1]))
+        facets: List[Dict[str, str]] = []
+        seen: set[str] = set()
+        for _score, _order, heading in ranked:
+            normalized = cls._normalize_query_text(heading)
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            facets.append({"label": heading, "query": heading})
+            if len(facets) >= max_facets:
+                break
+        return facets
+
+    @classmethod
+    def _infer_retrieval_group(cls, doc: Document) -> str:
+        """Infer a retrieval group from metadata and chunk text."""
+        metadata = doc.metadata or {}
+        explicit = str(metadata.get("retrieval_group") or "").strip()
+        if explicit:
+            return explicit
+        headings = cls._extract_candidate_headings(doc)
+        return headings[0] if headings else ""
+
+    @classmethod
+    def _infer_metadata_group(cls, doc: Document) -> str:
+        """Infer a retrieval group from structural metadata only."""
+        metadata = doc.metadata or {}
+        explicit = str(metadata.get("retrieval_group") or "").strip()
+        if explicit:
+            return explicit
+        for key in ("section_title", "outline_path", "chapter_title", "breadcrumb"):
+            value = str(metadata.get(key) or "").strip()
+            if value and value.lower() not in {"tổng quan các mục chính", "tong quan cac muc chinh"}:
+                parts = [cls._clean_heading(part) for part in value.split(">") if part.strip()]
+                for part in reversed(parts):
+                    if cls._is_decomposition_heading(part):
+                        return part
+        return ""
+
+    @staticmethod
+    def _with_retrieval_group(doc: Document, group: str) -> Document:
+        metadata = dict(doc.metadata or {})
+        if group:
+            metadata.setdefault("retrieval_group", group)
+        return Document(page_content=doc.page_content, metadata=metadata)
 
     def _select_context_documents(
         self,
@@ -237,6 +490,36 @@ class RAGPipeline:
 
         if mode != "broad":
             return deduped
+
+        theory_grouped: Dict[str, List[Document]] = {}
+        theory_order: List[str] = []
+        ungrouped: List[Document] = []
+        for doc in deduped:
+            metadata = doc.metadata or {}
+            group = str(metadata.get("retrieval_group") or "").strip()
+            if not group:
+                ungrouped.append(doc)
+                continue
+            if group not in theory_grouped:
+                theory_grouped[group] = []
+                theory_order.append(group)
+            theory_grouped[group].append(doc)
+
+        if theory_grouped:
+            diversified: List[Document] = []
+            per_group_counts = {group: 0 for group in theory_order}
+            max_per_group = 3
+            while True:
+                added = False
+                for group in theory_order:
+                    if theory_grouped[group] and per_group_counts[group] < max_per_group:
+                        diversified.append(theory_grouped[group].pop(0))
+                        per_group_counts[group] += 1
+                        added = True
+                if not added:
+                    break
+            diversified.extend(ungrouped[:3])
+            return diversified
 
         grouped: Dict[str, List[Document]] = {}
         source_order: List[str] = []
@@ -269,9 +552,13 @@ class RAGPipeline:
         selected_docs = self._select_context_documents(docs, mode)
         context_parts: List[str] = []
         total_chars = 0
+        group_order: List[str] = []
 
         for doc in selected_docs:
             metadata = doc.metadata or {}
+            retrieval_group = str(metadata.get("retrieval_group") or "").strip()
+            if retrieval_group and retrieval_group not in group_order:
+                group_order.append(retrieval_group)
             source = str(
                 metadata.get("file_name")
                 or metadata.get("source")
@@ -280,6 +567,8 @@ class RAGPipeline:
             )
             breadcrumb = str(metadata.get("breadcrumb") or "").strip()
             header = f"[Nguồn: {source}]"
+            if retrieval_group:
+                header = f"[GROUP: {retrieval_group}]\n{header}"
             if breadcrumb:
                 header = f"{header}\n{breadcrumb}"
             part = f"{header}\n\n{doc.page_content.strip()}"
@@ -296,7 +585,18 @@ class RAGPipeline:
             context_parts.append(part)
             total_chars += len(part) + separator_len
 
-        return "\n\n---\n\n".join(context_parts)
+        context = "\n\n---\n\n".join(context_parts)
+        if group_order:
+            required_groups = "; ".join(group_order)
+            return (
+                "Hướng dẫn bắt buộc: Context bên dưới đã được chia theo các header [GROUP: ...]. "
+                f"Bạn phải trả lời bằng tiếng Việt và đi lần lượt đủ các nhóm sau: {required_groups}. "
+                "Với mỗi nhóm, chỉ nêu công trình/tác giả/luận điểm xuất hiện trong context của nhóm đó. "
+                "Không gộp bỏ nhóm, không chuyển sang ngôn ngữ khác, không tự thêm công trình ngoài context. "
+                "Nếu nhóm nào thiếu dữ liệu thì ghi rõ: context chưa đủ dữ liệu cho nhóm này.\n\n"
+                f"{context}"
+            )
+        return context
 
     @staticmethod
     def _document_identity(doc: Document) -> str:
@@ -363,6 +663,62 @@ class RAGPipeline:
             results = self._merge_documents(results, docs)
         return results
 
+    def _decomposed_broad_search(
+        self,
+        question: str,
+        mode: str,
+        seed_docs: Optional[List[Document]] = None,
+        access_filter: Optional[Dict[str, Any]] = None,
+    ) -> List[Document]:
+        """Retrieve per-heading facet chunks for broad questions."""
+        if mode != "broad":
+            return []
+
+        facets = self.decompose_broad_query(question, seed_docs=seed_docs)
+        if not facets:
+            return []
+
+        results: List[Document] = []
+        per_facet_k = max(2, min(4, self.keyword_supplement_top_k))
+        keyword_search = getattr(self.vector_store_manager, "keyword_search", None)
+
+        for facet in facets:
+            label = facet["label"]
+            facet_query = facet["query"]
+            facet_docs: List[Document] = []
+            try:
+                facet_docs = self.vector_store_manager.similarity_search(
+                    query=facet_query,
+                    keyword_query=facet_query,
+                    k=per_facet_k,
+                    filter=access_filter,
+                )
+            except Exception:
+                logger.exception("[pipeline] Facet vector retrieval failed for %r", facet_query)
+
+            if keyword_search is not None:
+                try:
+                    facet_docs = self._merge_documents(
+                        facet_docs,
+                        keyword_search(
+                            query=facet_query,
+                            k=per_facet_k,
+                            filter=access_filter,
+                        ),
+                    )
+                except Exception:
+                    logger.exception("[pipeline] Facet keyword retrieval failed for %r", facet_query)
+
+            grouped_docs = []
+            for doc in facet_docs:
+                metadata_group = self._infer_metadata_group(doc)
+                if metadata_group and metadata_group != label:
+                    continue
+                grouped_docs.append(self._with_retrieval_group(doc, metadata_group or label))
+            results = self._merge_documents(results, grouped_docs)
+
+        return results
+
     @staticmethod
     def _filter_authorized_documents(
         docs: List[Document],
@@ -400,8 +756,10 @@ class RAGPipeline:
         """
         total_start = time.perf_counter()
         timings: Dict[str, float] = {}
-        query_mode = self.classify_query_mode(question)
-        top_k = self._resolve_top_k(question, k)
+        retrieval_question = self.contextualize_question(question, chat_history)
+        contextual_rewrite = retrieval_question if retrieval_question != question else None
+        query_mode = self.classify_query_mode(retrieval_question)
+        top_k = self._resolve_top_k(retrieval_question, k)
 
         # ----------------------------------------------------------
         # Step 1 — Cache lookup
@@ -413,6 +771,7 @@ class RAGPipeline:
             filters={
                 "access_filter": access_filter,
                 "document_version": document_version,
+                "contextual_query": retrieval_question,
             },
             model_version=self.llm_manager.model,
         )
@@ -448,18 +807,24 @@ class RAGPipeline:
         # ----------------------------------------------------------
         with self.benchmark.measure("search") as t_search:
             relevant_docs = self.vector_store_manager.similarity_search(
-                query=question,
-                keyword_query=question,
+                query=retrieval_question,
+                keyword_query=retrieval_question,
                 k=top_k,
                 filter=access_filter,
             )
             keyword_docs = self._keyword_supplement_search(
-                question,
+                retrieval_question,
                 query_mode,
                 access_filter=access_filter,
             )
+            facet_docs = self._decomposed_broad_search(
+                retrieval_question,
+                query_mode,
+                seed_docs=self._merge_documents(keyword_docs, relevant_docs),
+                access_filter=access_filter,
+            )
             if query_mode == "broad":
-                relevant_docs = self._merge_documents(keyword_docs, relevant_docs)
+                relevant_docs = self._merge_documents(facet_docs, keyword_docs, relevant_docs)
             else:
                 relevant_docs = self._merge_documents(relevant_docs, keyword_docs)
             relevant_docs = self._filter_authorized_documents(relevant_docs, access_filter)
@@ -514,7 +879,7 @@ class RAGPipeline:
         # ----------------------------------------------------------
         # Step 5 — LLM generation
         # ----------------------------------------------------------
-        rewritten_query: Optional[str] = None
+        rewritten_query: Optional[str] = contextual_rewrite
         queue_wait_ms = 0.0
 
         if self.prompt_fusion_enabled:
@@ -528,7 +893,7 @@ class RAGPipeline:
                         chat_history=chat_history,
                     )
                     answer = fused_result["answer"]
-                    rewritten_query = fused_result.get("rewritten_query")
+                    rewritten_query = contextual_rewrite or fused_result.get("rewritten_query")
                     queue_wait_ms = fused_result.get("queue_wait_ms", 0.0)
                 except (LLMQueueFullError, LLMTimeoutError):
                     raise
@@ -542,15 +907,15 @@ class RAGPipeline:
                     )
         else:
             # Classic 2-call flow
+            generation_query = question
             if self.query_rewrite_enabled:
                 rewritten = self._rewrite_query(question)
-                if rewritten != question:
+                if rewritten != question and not rewritten_query:
                     rewritten_query = rewritten
-
-            search_query = rewritten_query or question
+                    generation_query = rewritten
             with self.benchmark.measure("llm") as t_llm:
                 answer = self._classic_generate(
-                    search_query, context, system_prompt, chat_history
+                    generation_query, context, system_prompt, chat_history
                 )
 
         timings["llm_ms"] = t_llm.elapsed_ms if "t_llm" in dir() else 0.0
@@ -631,8 +996,10 @@ class RAGPipeline:
         submitted (if async_post_processing_enabled).
         """
         total_start = time.perf_counter()
-        query_mode = self.classify_query_mode(question)
-        top_k = self._resolve_top_k(question, k)
+        retrieval_question = self.contextualize_question(question, chat_history)
+        contextual_rewrite = retrieval_question if retrieval_question != question else None
+        query_mode = self.classify_query_mode(retrieval_question)
+        top_k = self._resolve_top_k(retrieval_question, k)
 
         # Cache lookup
         document_version = str(self.vector_store_manager.get_document_version())
@@ -642,6 +1009,7 @@ class RAGPipeline:
             filters={
                 "access_filter": access_filter,
                 "document_version": document_version,
+                "contextual_query": retrieval_question,
             },
             model_version=self.llm_manager.model,
         )
@@ -663,18 +1031,24 @@ class RAGPipeline:
 
         # Hybrid search
         relevant_docs = self.vector_store_manager.similarity_search(
-            query=question,
-            keyword_query=question,
+            query=retrieval_question,
+            keyword_query=retrieval_question,
             k=top_k,
             filter=access_filter,
         )
         keyword_docs = self._keyword_supplement_search(
-            question,
+            retrieval_question,
             query_mode,
             access_filter=access_filter,
         )
+        facet_docs = self._decomposed_broad_search(
+            retrieval_question,
+            query_mode,
+            seed_docs=self._merge_documents(keyword_docs, relevant_docs),
+            access_filter=access_filter,
+        )
         if query_mode == "broad":
-            relevant_docs = self._merge_documents(keyword_docs, relevant_docs)
+            relevant_docs = self._merge_documents(facet_docs, keyword_docs, relevant_docs)
         else:
             relevant_docs = self._merge_documents(relevant_docs, keyword_docs)
         relevant_docs = self._filter_authorized_documents(relevant_docs, access_filter)
@@ -723,7 +1097,7 @@ class RAGPipeline:
         ttft_recorded = False
         ttft_ms = 0.0
         accumulated_tokens: List[str] = []
-        rewritten_query: Optional[str] = None
+        rewritten_query: Optional[str] = contextual_rewrite
         full_answer = ""
 
         try:
@@ -746,7 +1120,7 @@ class RAGPipeline:
                         chat_history=chat_history,
                     )
                     clean_answer = fused_result["answer"]
-                    rewritten_query = fused_result.get("rewritten_query")
+                    rewritten_query = contextual_rewrite or fused_result.get("rewritten_query")
                 except (LLMQueueFullError, LLMTimeoutError) as exc:
                     yield f"\n\n❌ Lỗi: {exc}"
                     return
@@ -800,7 +1174,7 @@ class RAGPipeline:
             "answer": full_answer,
             "sources": sources,
             "context": context,
-            "rewritten_query": rewritten_query if self.prompt_fusion_enabled else None,
+            "rewritten_query": rewritten_query,
             "timing": self.benchmark.build_timing_dict(
                 {"ttft_ms": ttft_ms, "total_ms": total_ms}
             ),

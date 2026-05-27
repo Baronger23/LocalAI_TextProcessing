@@ -329,6 +329,8 @@ def build_system_prompt_with_summary(summary: str) -> str:
         "Hãy trả lời đúng trọng tâm câu hỏi, dựa trên ngữ cảnh truy xuất được từ tài liệu. "
         "Với câu hỏi tổng hợp hoặc phân tích, phải bao quát đầy đủ các ý chính có trong context, "
         "nhóm ý rõ ràng và giải thích quan hệ giữa các luận điểm thay vì chỉ liệt kê tên mục. "
+        "Nếu context có các header [GROUP: ...], phải trả lời lần lượt theo từng nhóm đó; "
+        "nhóm nào thiếu dữ liệu thì nói rõ context chưa đủ, không tự bổ sung công trình ngoài context. "
         "Nếu context thiếu dữ liệu hoặc chưa đủ thông tin để kết luận một phần nào đó, hãy nói rõ giới hạn này. "
         "Luôn trả lời bằng tiếng Việt, mạch lạc, có phân tích, không bịa thêm ngoài tài liệu."
     )
