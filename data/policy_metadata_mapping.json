@@ -1,0 +1,835 @@
+{
+  "acceptable_use_policy.pdf": {
+    "department": "general",
+    "sensitivity": "public",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Công nghệ thông tin",
+    "extracted_domain": "security Tài liệu liên quan it_security_policy.md, data_privacy_policy.md, incident_response_playbook.md",
+    "extracted_target": "",
+    "extracted_code": "APD-IT-023 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "access_control_policy.pdf": {
+    "department": "it",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Công nghệ thông tin",
+    "extracted_domain": "security Tài liệu liên quan it_security_policy.md, data_privacy_policy.md, incident_response_playbook.md",
+    "extracted_target": "",
+    "extracted_code": "APD-IT-019 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "accounts_payable_policy.pdf": {
+    "department": "finance",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Tài chính",
+    "extracted_domain": "finance Tài liệu liên quan finance_procurement_policy.md, travel_expense_policy.md, sales_contract_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-FIN-031 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "accounts_receivable_policy.pdf": {
+    "department": "finance",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Tài chính",
+    "extracted_domain": "finance Tài liệu liên quan finance_procurement_policy.md, travel_expense_policy.md, sales_contract_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-FIN-032 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "ai_governance_policy.pdf": {
+    "department": "it",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Văn phòng Dữ liệu",
+    "extracted_domain": "privacy Tài liệu liên quan data_privacy_policy.md, it_security_policy.md, records_retention_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-DATA-047 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "analytics_bi_policy.pdf": {
+    "department": "it",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Văn phòng Dữ liệu",
+    "extracted_domain": "privacy Tài liệu liên quan data_privacy_policy.md, it_security_policy.md, records_retention_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-DATA-048 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "anti_bribery_corruption_policy.pdf": {
+    "department": "general",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Pháp chế",
+    "extracted_domain": "records Tài liệu liên quan records_retention_policy.md, data_privacy_policy.md, contract_review_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-LEGAL-039 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "asset_management_policy.pdf": {
+    "department": "it",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Công nghệ thông tin",
+    "extracted_domain": "security Tài liệu liên quan it_security_policy.md, data_privacy_policy.md, incident_response_playbook.md",
+    "extracted_target": "",
+    "extracted_code": "APD-IT-018 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "backup_disaster_recovery_policy.pdf": {
+    "department": "it",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Công nghệ thông tin",
+    "extracted_domain": "operations Tài liệu liên quan incident_response_playbook.md, business_continuity_policy.md, it_security_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-IT-021 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "board_reporting_policy.pdf": {
+    "department": "general",
+    "sensitivity": "confidential",
+    "allowed_roles": [
+      "Admin",
+      "Manager"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Văn phòng Tổng Giám đốc",
+    "extracted_domain": "records Tài liệu liên quan records_retention_policy.md, data_privacy_policy.md, contract_review_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-COM-058 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "brand_usage_policy.pdf": {
+    "department": "general",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Marketing",
+    "extracted_domain": "records Tài liệu liên quan records_retention_policy.md, data_privacy_policy.md, contract_review_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-MKT-050 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "budgeting_forecasting_policy.pdf": {
+    "department": "finance",
+    "sensitivity": "confidential",
+    "allowed_roles": [
+      "Admin",
+      "Manager"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Tài chính",
+    "extracted_domain": "finance Tài liệu liên quan finance_procurement_policy.md, travel_expense_policy.md, sales_contract_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-FIN-033 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "business_continuity_policy.pdf": {
+    "department": "security",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Quản trị rủi ro",
+    "extracted_domain": "operations Tài liệu liên quan incident_response_playbook.md, business_continuity_policy.md, it_security_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-RISK-056 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "change_management_policy.pdf": {
+    "department": "it",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Công nghệ thông tin",
+    "extracted_domain": "operations Tài liệu liên quan incident_response_playbook.md, business_continuity_policy.md, it_security_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-IT-020 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "cloud_security_policy.pdf": {
+    "department": "it",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Công nghệ thông tin",
+    "extracted_domain": "security Tài liệu liên quan it_security_policy.md, data_privacy_policy.md, incident_response_playbook.md",
+    "extracted_target": "",
+    "extracted_code": "APD-IT-022 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "code_of_conduct_policy.pdf": {
+    "department": "general",
+    "sensitivity": "public",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Pháp chế",
+    "extracted_domain": "records Tài liệu liên quan records_retention_policy.md, data_privacy_policy.md, contract_review_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-COM-013 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "compensation_benefits_policy.pdf": {
+    "department": "hr",
+    "sensitivity": "confidential",
+    "allowed_roles": [
+      "Admin",
+      "Manager"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Nhân sự",
+    "extracted_domain": "people Tài liệu liên quan employee_handbook.md, remote_work_policy.md, data_privacy_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-HR-011 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "competition_law_policy.pdf": {
+    "department": "legal",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Pháp chế",
+    "extracted_domain": "records Tài liệu liên quan records_retention_policy.md, data_privacy_policy.md, contract_review_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-LEGAL-041 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "conflict_of_interest_policy.pdf": {
+    "department": "general",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Pháp chế",
+    "extracted_domain": "records Tài liệu liên quan records_retention_policy.md, data_privacy_policy.md, contract_review_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-LEGAL-015 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "contract_review_policy.pdf": {
+    "department": "legal",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Pháp chế",
+    "extracted_domain": "records Tài liệu liên quan records_retention_policy.md, data_privacy_policy.md, contract_review_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-LEGAL-037 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "crisis_communications_policy.pdf": {
+    "department": "general",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Truyền thông",
+    "extracted_domain": "operations Tài liệu liên quan incident_response_playbook.md, business_continuity_policy.md, it_security_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-COM-042 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "customer_onboarding_policy.pdf": {
+    "department": "it",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Customer Success",
+    "extracted_domain": "operations Tài liệu liên quan incident_response_playbook.md, business_continuity_policy.md, it_security_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-CS-044 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "customer_support_sla_policy.pdf": {
+    "department": "it",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Customer Success",
+    "extracted_domain": "operations Tài liệu liên quan incident_response_playbook.md, business_continuity_policy.md, it_security_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-CS-043 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "data_classification_policy.pdf": {
+    "department": "it",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Văn phòng Dữ liệu",
+    "extracted_domain": "privacy Tài liệu liên quan data_privacy_policy.md, it_security_policy.md, records_retention_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-DATA-026 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "data_privacy_policy.pdf": {
+    "department": "general",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Pháp chế",
+    "extracted_domain": "",
+    "extracted_target": "Nhân viên xử lý dữ liệu khách hàng, nhân sự, đối tác tích hợp và đội sản phẩm Tài liệu liên quan it_security_policy.md, incident_response_playbook.md, sales_contract_policy.md Mục đích test RAG Tài liệu giả lập, không phải chính sách pháp lý của công ty thật",
+    "extracted_code": "APD-LEGAL-005 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.8 Ngày hiệu lực 2026-01-20 Ngày rà soát kế tiếp 2026-10-31"
+  },
+  "dei_policy.pdf": {
+    "department": "general",
+    "sensitivity": "public",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Nhân sự",
+    "extracted_domain": "people Tài liệu liên quan employee_handbook.md, remote_work_policy.md, data_privacy_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-HR-016 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "delegation_authority_policy.pdf": {
+    "department": "finance",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Văn phòng Tổng Giám đốc",
+    "extracted_domain": "finance Tài liệu liên quan finance_procurement_policy.md, travel_expense_policy.md, sales_contract_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-GOV-059 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "document_management_policy.pdf": {
+    "department": "general",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Hành chính",
+    "extracted_domain": "records Tài liệu liên quan records_retention_policy.md, data_privacy_policy.md, contract_review_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-ADMIN-052 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "email_collaboration_policy.pdf": {
+    "department": "it",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Công nghệ thông tin",
+    "extracted_domain": "security Tài liệu liên quan it_security_policy.md, data_privacy_policy.md, incident_response_playbook.md",
+    "extracted_target": "",
+    "extracted_code": "APD-IT-024 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "employee_handbook.pdf": {
+    "department": "general",
+    "sensitivity": "public",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Nhân sự",
+    "extracted_domain": "",
+    "extracted_target": "Toàn bộ nhân viên, cộng tác viên dài hạn và quản lý trực tiếp Tài liệu liên quan remote_work_policy.md, travel_expense_policy.md, data_privacy_policy.md Mục đích test RAG Tài liệu giả lập, không phải chính sách pháp lý của công ty thật",
+    "extracted_code": "APD-HR-001 Tên công ty Công ty TNHH An Phát Digital Phiên bản 2.3 Ngày hiệu lực 2026-01-01 Ngày rà soát kế tiếp 2026-12-31"
+  },
+  "enterprise_risk_management_policy.pdf": {
+    "department": "security",
+    "sensitivity": "confidential",
+    "allowed_roles": [
+      "Admin",
+      "Manager"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Quản trị rủi ro",
+    "extracted_domain": "operations Tài liệu liên quan incident_response_playbook.md, business_continuity_policy.md, it_security_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-RISK-055 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "environment_sustainability_policy.pdf": {
+    "department": "general",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng ESG",
+    "extracted_domain": "records Tài liệu liên quan records_retention_policy.md, data_privacy_policy.md, contract_review_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-ESG-053 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "facilities_access_policy.pdf": {
+    "department": "it",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Hành chính",
+    "extracted_domain": "security Tài liệu liên quan it_security_policy.md, data_privacy_policy.md, incident_response_playbook.md",
+    "extracted_target": "",
+    "extracted_code": "APD-ADMIN-051 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "finance_procurement_policy.pdf": {
+    "department": "finance",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Tài chính",
+    "extracted_domain": "",
+    "extracted_target": "Các phòng ban có nhu cầu mua sắm, kế toán, pháp chế và người phê duyệt ngân sách Tài liệu liên quan sales_contract_policy.md, travel_expense_policy.md Mục đích test RAG Tài liệu giả lập, không phải chính sách pháp lý của công ty thật",
+    "extracted_code": "APD-FIN-003 Tên công ty Công ty TNHH An Phát Digital Phiên bản 2.0 Ngày hiệu lực 2026-03-01 Ngày rà soát kế tiếp 2027-02-28"
+  },
+  "fixed_asset_inventory_policy.pdf": {
+    "department": "finance",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Tài chính",
+    "extracted_domain": "finance Tài liệu liên quan finance_procurement_policy.md, travel_expense_policy.md, sales_contract_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-FIN-036 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "gifts_hospitality_policy.pdf": {
+    "department": "general",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Pháp chế",
+    "extracted_domain": "finance Tài liệu liên quan finance_procurement_policy.md, travel_expense_policy.md, sales_contract_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-LEGAL-040 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "incident_response_playbook.pdf": {
+    "department": "general",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Trung tâm Vận hành",
+    "extracted_domain": "",
+    "extracted_target": "Đội vận hành, IT, bảo mật, pháp chế, truyền thông và quản lý khủng hoảng Tài liệu liên quan it_security_policy.md, data_privacy_policy.md Mục đích test RAG Tài liệu giả lập, không phải chính sách pháp lý của công ty thật",
+    "extracted_code": "APD-OPS-008 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.9 Ngày hiệu lực 2026-04-15 Ngày rà soát kế tiếp 2026-12-31"
+  },
+  "insurance_claims_policy.pdf": {
+    "department": "finance",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Tài chính",
+    "extracted_domain": "finance Tài liệu liên quan finance_procurement_policy.md, travel_expense_policy.md, sales_contract_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-FIN-057 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "intellectual_property_policy.pdf": {
+    "department": "legal",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Pháp chế",
+    "extracted_domain": "records Tài liệu liên quan records_retention_policy.md, data_privacy_policy.md, contract_review_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-LEGAL-038 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "internal_audit_policy.pdf": {
+    "department": "general",
+    "sensitivity": "confidential",
+    "allowed_roles": [
+      "Admin",
+      "Manager"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Kiểm toán nội bộ",
+    "extracted_domain": "records Tài liệu liên quan records_retention_policy.md, data_privacy_policy.md, contract_review_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-AUD-054 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "it_security_policy.pdf": {
+    "department": "general",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Công nghệ thông tin",
+    "extracted_domain": "",
+    "extracted_target": "Nhân viên, nhà thầu, quản trị viên hệ thống và đối tác có truy cập hệ thống Tài liệu liên quan data_privacy_policy.md, incident_response_playbook.md, remote_work_policy.md Mục đích test RAG Tài liệu giả lập, không phải chính sách pháp lý của công ty thật",
+    "extracted_code": "APD-IT-002 Tên công ty Công ty TNHH An Phát Digital Phiên bản 3.1 Ngày hiệu lực 2026-02-15 Ngày rà soát kế tiếp 2026-11-30"
+  },
+  "learning_development_policy.pdf": {
+    "department": "hr",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Nhân sự",
+    "extracted_domain": "people Tài liệu liên quan employee_handbook.md, remote_work_policy.md, data_privacy_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-HR-012 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "marketing_communications_policy.pdf": {
+    "department": "it",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Marketing",
+    "extracted_domain": "privacy Tài liệu liên quan data_privacy_policy.md, it_security_policy.md, records_retention_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-MKT-049 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "onboarding_offboarding_policy.pdf": {
+    "department": "hr",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Nhân sự",
+    "extracted_domain": "people Tài liệu liên quan employee_handbook.md, remote_work_policy.md, data_privacy_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-HR-009 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "performance_management_policy.pdf": {
+    "department": "hr",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Nhân sự",
+    "extracted_domain": "people Tài liệu liên quan employee_handbook.md, remote_work_policy.md, data_privacy_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-HR-010 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "policy_governance_policy.pdf": {
+    "department": "general",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Văn phòng Tổng Giám đốc",
+    "extracted_domain": "records Tài liệu liên quan records_retention_policy.md, data_privacy_policy.md, contract_review_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-GOV-060 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "procurement_exceptions_policy.pdf": {
+    "department": "finance",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Tài chính",
+    "extracted_domain": "finance Tài liệu liên quan finance_procurement_policy.md, travel_expense_policy.md, sales_contract_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-FIN-030 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "product_release_policy.pdf": {
+    "department": "it",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Khối Sản phẩm",
+    "extracted_domain": "operations Tài liệu liên quan incident_response_playbook.md, business_continuity_policy.md, it_security_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-PROD-045 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "quality_assurance_policy.pdf": {
+    "department": "it",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Khối Sản phẩm",
+    "extracted_domain": "operations Tài liệu liên quan incident_response_playbook.md, business_continuity_policy.md, it_security_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-PROD-046 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "records_retention_policy.pdf": {
+    "department": "legal",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Pháp chế",
+    "extracted_domain": "records Tài liệu liên quan records_retention_policy.md, data_privacy_policy.md, contract_review_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-LEGAL-027 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "remote_work_policy.pdf": {
+    "department": "general",
+    "sensitivity": "public",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Nhân sự",
+    "extracted_domain": "",
+    "extracted_target": "Nhân viên làm việc hybrid, quản lý trực tiếp, IT và HRBP Tài liệu liên quan employee_handbook.md, it_security_policy.md Mục đích test RAG Tài liệu giả lập, không phải chính sách pháp lý của công ty thật",
+    "extracted_code": "APD-HR-007 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.6 Ngày hiệu lực 2026-03-15 Ngày rà soát kế tiếp 2026-09-30"
+  },
+  "sales_contract_policy.pdf": {
+    "department": "general",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Kinh doanh",
+    "extracted_domain": "",
+    "extracted_target": "Sales, Customer Success, Pháp chế, Tài chính và người phê duyệt hợp đồng Tài liệu liên quan finance_procurement_policy.md, data_privacy_policy.md Mục đích test RAG Tài liệu giả lập, không phải chính sách pháp lý của công ty thật",
+    "extracted_code": "APD-SALES-006 Tên công ty Công ty TNHH An Phát Digital Phiên bản 2.2 Ngày hiệu lực 2026-02-01 Ngày rà soát kế tiếp 2026-12-15"
+  },
+  "software_license_policy.pdf": {
+    "department": "it",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Công nghệ thông tin",
+    "extracted_domain": "finance Tài liệu liên quan finance_procurement_policy.md, travel_expense_policy.md, sales_contract_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-IT-025 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "tax_invoice_policy.pdf": {
+    "department": "finance",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Tài chính",
+    "extracted_domain": "finance Tài liệu liên quan finance_procurement_policy.md, travel_expense_policy.md, sales_contract_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-FIN-035 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "third_party_access_policy.pdf": {
+    "department": "it",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Công nghệ thông tin",
+    "extracted_domain": "security Tài liệu liên quan it_security_policy.md, data_privacy_policy.md, incident_response_playbook.md",
+    "extracted_target": "",
+    "extracted_code": "APD-IT-029 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "travel_expense_policy.pdf": {
+    "department": "general",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Tài chính",
+    "extracted_domain": "",
+    "extracted_target": "Nhân viên đi công tác, trợ lý phòng ban, quản lý phê duyệt và kế toán thanh toán Tài liệu liên quan finance_procurement_policy.md, employee_handbook.md, remote_work_policy.md Mục đích test RAG Tài liệu giả lập, không phải chính sách pháp lý của công ty thật",
+    "extracted_code": "APD-FIN-004 Tên công ty Công ty TNHH An Phát Digital Phiên bản 2.4 Ngày hiệu lực 2026-04-01 Ngày rà soát kế tiếp 2026-12-31"
+  },
+  "treasury_cash_management_policy.pdf": {
+    "department": "finance",
+    "sensitivity": "confidential",
+    "allowed_roles": [
+      "Admin",
+      "Manager"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Tài chính",
+    "extracted_domain": "finance Tài liệu liên quan finance_procurement_policy.md, travel_expense_policy.md, sales_contract_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-FIN-034 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "vendor_risk_policy.pdf": {
+    "department": "security",
+    "sensitivity": "confidential",
+    "allowed_roles": [
+      "Admin",
+      "Manager"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Quản trị rủi ro",
+    "extracted_domain": "finance Tài liệu liên quan finance_procurement_policy.md, travel_expense_policy.md, sales_contract_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-RISK-028 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "whistleblower_policy.pdf": {
+    "department": "general",
+    "sensitivity": "internal",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Pháp chế",
+    "extracted_domain": "records Tài liệu liên quan records_retention_policy.md, data_privacy_policy.md, contract_review_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-LEGAL-014 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  },
+  "workplace_safety_policy.pdf": {
+    "department": "general",
+    "sensitivity": "public",
+    "allowed_roles": [
+      "Admin",
+      "Manager",
+      "Employee"
+    ],
+    "metadata_verified": true,
+    "extracted_owner": "Phòng Hành chính",
+    "extracted_domain": "operations Tài liệu liên quan incident_response_playbook.md, business_continuity_policy.md, it_security_policy.md",
+    "extracted_target": "",
+    "extracted_code": "APD-HR-017 Tên công ty Công ty TNHH An Phát Digital Phiên bản 1.0 Ngày hiệu lực 2026-05-27 Ngày rà soát kế tiếp 2027-05-27"
+  }
+}

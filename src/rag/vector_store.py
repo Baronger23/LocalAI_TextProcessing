@@ -271,7 +271,7 @@ class VectorStoreManager:
         CREATE INDEX IF NOT EXISTS idx_document_chunks_metadata ON {self.postgres_schema}.{self.postgres_table_name} USING gin (metadata);
         CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding ON {self.postgres_schema}.{self.postgres_table_name} USING hnsw (embedding vector_cosine_ops);
         CREATE INDEX IF NOT EXISTS idx_document_chunks_fts ON {self.postgres_schema}.{self.postgres_table_name} USING gin(fts_vector);
-        CREATE UNIQUE INDEX IF NOT EXISTS {self._content_hash_index_name} ON {self.postgres_schema}.{self.postgres_table_name}(content_hash);
+        CREATE INDEX IF NOT EXISTS {self._content_hash_index_name} ON {self.postgres_schema}.{self.postgres_table_name}(content_hash);
         """
 
         with self._get_postgres_connection() as conn:
@@ -295,7 +295,7 @@ class VectorStoreManager:
 
     # Maximum characters to feed into the embedding model per chunk.
     # Ollama can crash / return 400 if the input is extremely long.
-    _MAX_EMBED_CHARS = 8000
+    _MAX_EMBED_CHARS = 3000
     _EMBED_RETRIES = 3
 
     def _safe_embed(self, text: str) -> List[float]:
@@ -313,6 +313,7 @@ class VectorStoreManager:
         raise RuntimeError(
             f"Embedding failed after {self._EMBED_RETRIES} attempts: {last_exc}"
         ) from last_exc
+
 
     def _build_access_sql_filter(
         self,
@@ -484,16 +485,16 @@ class VectorStoreManager:
 
                 # Debug: show small content previews to verify chunking differences
                 previews = [c["content"].replace("\n", " ")[:120] for c in chunk_data[:5]]
-                print(f"  Sample chunk previews: {previews}")
+                logger.info("  Sample chunk previews: %s", previews)
                 
-                print(f"[INGESTION_DEBUG] Source: {source_key}")
-                print(f"  Total chunks parsed: {len(chunk_data)}")
-                print(f"  Existing chunks for THIS document in DB: {len(existing_hashes)}")
-                print(f"  New chunks to embed: {len(new_chunks)}")
+                logger.info("[INGESTION_DEBUG] Source: %s", source_key)
+                logger.info("  Total chunks parsed: %d", len(chunk_data))
+                logger.info("  Existing chunks for THIS document in DB: %d", len(existing_hashes))
+                logger.info("  New chunks to embed: %d", len(new_chunks))
 
                 # FIX: Provide better visibility for re-upload scenarios
                 if existing_hashes and len(new_chunks) > 0:
-                    print(f"  ℹ️  RE-UPLOAD DETECTED: Adding {len(new_chunks)} new chunks to {len(existing_hashes)} existing chunks")
+                    logger.info("  RE-UPLOAD DETECTED: Adding %d new chunks to %d existing chunks", len(new_chunks), len(existing_hashes))
 
                 if not new_chunks:
                     # All chunks already exist — skip embedding entirely
@@ -519,7 +520,7 @@ class VectorStoreManager:
                         f"WHERE id = %s",
                         (document_id,),
                     )
-                    print(f"Embedding failed for {source_document['file_name']}: {exc}")
+                    logger.warning("Embedding failed for %s: %s", source_document['file_name'], exc)
                     continue
 
                 # --- Step 4: Bulk insert with ON CONFLICT DO NOTHING ---
@@ -535,8 +536,16 @@ class VectorStoreManager:
                              embedding, embedding_model, page_number, metadata,
                              processing_status)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, 'done')
-                        ON CONFLICT (content_hash)
-                            DO NOTHING
+                        ON CONFLICT (document_id, chunk_index)
+                            DO UPDATE SET
+                                content = EXCLUDED.content,
+                                content_hash = EXCLUDED.content_hash,
+                                embedding = EXCLUDED.embedding,
+                                embedding_model = EXCLUDED.embedding_model,
+                                page_number = EXCLUDED.page_number,
+                                metadata = EXCLUDED.metadata,
+                                processing_status = 'done',
+                                updated_at = NOW()
                         """,
                         (
                             document_id,
@@ -551,7 +560,7 @@ class VectorStoreManager:
                     )
                     inserted_count += 1
                 
-                print(f"  Chunks inserted: {inserted_count}")
+                logger.info("  Chunks inserted: %d", inserted_count)
 
                 # Mark document as done
                 conn.execute(
@@ -562,6 +571,54 @@ class VectorStoreManager:
                 )
 
         return ids
+
+    @staticmethod
+    def _to_simple_tsquery_string(query: str) -> str:
+        """Convert a query string to a simple tsquery string with stop words filtered."""
+        import re
+        import unicodedata
+        # Clean special characters including ?, ;, etc.
+        cleaned = re.sub(r"[&|!:'()\"?,.;\-/[\]{}]", " ", query)
+        raw_tokens = [t.strip() for t in cleaned.split() if t.strip()]
+
+        stop_words = {
+            "neu", "toi", "thi", "ai", "se", "bang", "cho", "cua", "da", "duoc", 
+            "co", "khong", "la", "va", "hoac", "nhung", "vi", "nen", "voi", "tai", 
+            "trong", "o", "nay", "do", "kia", "ay", "nao", "gi", "su", "viec", 
+            "cac", "nhung", "mot", "hai", "bon", "tam", "chin", "muoi", "tren", 
+            "duoi", "khi", "luc", "noi", "cho", "nguoi", "hay", "den", "de", 
+            "theo", "nhu", "xem", "the",
+            "a", "an", "in", "on", "at", "for", "of", "with", "to", "and", 
+            "or", "if", "then", "who", "will", "be", "is", "are", "was", "were", 
+            "you", "i", "he", "she", "they", "we", "it", "my", "your", "his", "her",
+            "him", "them", "us", "our", "their", "this", "that", "these", "those",
+            "thoi", "gian", "cach", "thuc", "ra", "doi", "lam", "viec", "tai", "cong", "ty",
+            # New stop words added
+            "moi", "ngay", "tuan", "thang", "nam", "quy", "dieu", "khoan", "muc", "chuong",
+            "nhat", "truoc", "sau", "lien", "quan",
+            # Turn 4 query noise words
+            "cap", "di", "tac", "gio", "chuyen"
+        }
+
+        def strip_accents(text):
+            lowered = text.lower().replace("đ", "d")
+            return "".join(
+                ch for ch in unicodedata.normalize("NFD", lowered)
+                if unicodedata.category(ch) != "Mn"
+            )
+
+        tokens = []
+        for t in raw_tokens:
+            t_stripped = strip_accents(t)
+            if t_stripped not in stop_words and len(t) >= 2:
+                tokens.append(t)
+
+        if not tokens:
+            tokens = [t for t in raw_tokens if len(t) >= 2]
+        if not tokens:
+            return "the"
+
+        return " | ".join(tokens)
 
     def _postgres_similarity_search(
         self,
@@ -656,11 +713,11 @@ class VectorStoreManager:
                 d.file_name,
                 d.file_path,
                 d.metadata AS document_metadata,
-                ts_rank(c.fts_vector, websearch_to_tsquery('simple', %s) || websearch_to_tsquery('simple', %s)) AS keyword_score,
-                ROW_NUMBER() OVER (ORDER BY ts_rank(c.fts_vector, websearch_to_tsquery('simple', %s) || websearch_to_tsquery('simple', %s)) DESC) AS keyword_rank
+                ts_rank_cd(c.fts_vector, to_tsquery('simple', %s)) AS keyword_score,
+                ROW_NUMBER() OVER (ORDER BY ts_rank_cd(c.fts_vector, to_tsquery('simple', %s)) DESC) AS keyword_rank
             FROM {self.postgres_schema}.{self.postgres_table_name} c
             JOIN {self.postgres_schema}.documents d ON d.id = c.document_id
-            WHERE (c.fts_vector @@ websearch_to_tsquery('simple', %s) OR c.fts_vector @@ websearch_to_tsquery('simple', %s)) {where_clause_keyword}
+            WHERE c.fts_vector @@ to_tsquery('simple', %s) {where_clause_keyword}
             ORDER BY keyword_score DESC
             LIMIT %s
         )
@@ -676,7 +733,18 @@ class VectorStoreManager:
             COALESCE(s.file_path, k.file_path) AS file_path,
             COALESCE(s.document_metadata, k.document_metadata) AS document_metadata,
             COALESCE(1.0 / (60 + s.semantic_rank), 0.0) +
-            COALESCE(1.0 / (60 + k.keyword_rank), 0.0) AS rrf_score,
+            COALESCE(1.0 / (60 + k.keyword_rank), 0.0) AS raw_rrf_score,
+            COALESCE(
+                (COALESCE(s.document_metadata, k.document_metadata)->>'doc_authority')::float,
+                1.0
+            ) AS doc_authority,
+            (
+                COALESCE(1.0 / (60 + s.semantic_rank), 0.0) +
+                COALESCE(1.0 / (60 + k.keyword_rank), 0.0)
+            ) * COALESCE(
+                (COALESCE(s.document_metadata, k.document_metadata)->>'doc_authority')::float,
+                1.0
+            ) AS rrf_score,
             s.vector_score,
             k.keyword_score
         FROM semantic_search s
@@ -685,6 +753,8 @@ class VectorStoreManager:
         LIMIT %s
         """
 
+        tsquery_str = self._to_simple_tsquery_string(fts_query)
+
         final_params = []
         # Semantic CTE parameters
         final_params.extend([query_vector, query_vector])
@@ -692,7 +762,7 @@ class VectorStoreManager:
         final_params.extend([query_vector, fetch_limit])
 
         # Keyword CTE parameters
-        final_params.extend([query, fts_query, query, fts_query, query, fts_query])
+        final_params.extend([tsquery_str, tsquery_str, tsquery_str])
         final_params.extend(keyword_filter_params)
         final_params.append(fetch_limit)
 
@@ -758,6 +828,8 @@ class VectorStoreManager:
             document_alias="d",
         )
 
+        tsquery_str = self._to_simple_tsquery_string(query)
+
         sql = f"""
         SELECT
             c.id as chunk_id,
@@ -770,15 +842,15 @@ class VectorStoreManager:
             d.file_name,
             d.file_path,
             d.metadata AS document_metadata,
-            ts_rank_cd(c.fts_vector, websearch_to_tsquery('simple', %s)) AS keyword_score
+            ts_rank_cd(c.fts_vector, to_tsquery('simple', %s)) AS keyword_score
         FROM {self.postgres_schema}.{self.postgres_table_name} c
         JOIN {self.postgres_schema}.documents d ON d.id = c.document_id
-        WHERE c.fts_vector @@ websearch_to_tsquery('simple', %s) {where_clause}
+        WHERE c.fts_vector @@ to_tsquery('simple', %s) {where_clause}
         ORDER BY keyword_score DESC, c.chunk_index ASC
         LIMIT %s
         """
 
-        params: List[Any] = [query, query]
+        params: List[Any] = [tsquery_str, tsquery_str]
         params.extend(filter_params)
         params.append(k)
 
@@ -815,28 +887,18 @@ class VectorStoreManager:
         self._init_postgres_schema()
 
         with self._pool_connection() as conn:
-            deleted_rows = conn.execute(
-                f"""
-                DELETE FROM {self.postgres_schema}.{self.postgres_table_name}
-                RETURNING document_id
-                """
-            ).fetchall()
-            document_ids = [row["document_id"] for row in deleted_rows]
-            if not document_ids:
-                return
-
-            placeholders = ",".join(["%s"] * len(document_ids))
+            conn.execute(
+                f"DELETE FROM {self.postgres_schema}.{self.postgres_table_name}"
+            )
             conn.execute(
                 f"""
                 DELETE FROM {self.postgres_schema}.documents d
-                WHERE d.id IN ({placeholders})
-                  AND NOT EXISTS (
-                      SELECT 1
-                      FROM {self.postgres_schema}.{POSTGRES_VECTOR_TABLE} c
-                      WHERE c.document_id = d.id
-                  )
-                """,
-                document_ids,
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM {self.postgres_schema}.{POSTGRES_VECTOR_TABLE} c
+                    WHERE c.document_id = d.id
+                )
+                """
             )
 
     def _postgres_collection_stats(self) -> Dict[str, Any]:

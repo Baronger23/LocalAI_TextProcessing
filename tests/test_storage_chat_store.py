@@ -7,17 +7,16 @@ Coverage focus:
 - User memories filtering, dedupe, and bounded retention.
 """
 
-import sqlite3
-
+import psycopg
 import pytest
 
+from src.config import POSTGRES_CONNECTION_STRING
 from src.storage.chat_store import ChatStore
 
 
 @pytest.fixture
-def store(tmp_path):
-    db_path = tmp_path / "chat_store_test.db"
-    return ChatStore(db_path=str(db_path))
+def store():
+    return ChatStore(db_url=POSTGRES_CONNECTION_STRING)
 
 
 def _create_user(store: ChatStore, email: str, password: str = "password123") -> int:
@@ -51,20 +50,20 @@ def test_lock_retry_succeeds_after_transient_lock(store: ChatStore, monkeypatch)
     def operation(_conn):
         calls["count"] += 1
         if calls["count"] < 3:
-            raise sqlite3.OperationalError("database is locked")
+            raise psycopg.OperationalError("database connection lost")
         return 42
 
-    result = store._run_write_with_retry(operation)
+    result = store._run_with_retry(operation)
     assert result == 42
     assert calls["count"] == 3
 
 
 def test_lock_retry_does_not_swallow_non_lock_errors(store: ChatStore):
     def operation(_conn):
-        raise sqlite3.OperationalError("syntax error near FROM")
+        raise ValueError("syntax error")
 
-    with pytest.raises(sqlite3.OperationalError):
-        store._run_write_with_retry(operation)
+    with pytest.raises(ValueError):
+        store._run_with_retry(operation)
 
 
 def test_conversation_summary_roundtrip(store: ChatStore):

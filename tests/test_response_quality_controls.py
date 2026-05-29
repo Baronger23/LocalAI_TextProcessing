@@ -69,7 +69,7 @@ class TestAdaptiveTopK:
 
         rag.query("Phân tích các công trình lý luận về vai trò")
 
-        assert rag.vector_store_manager.similarity_search.call_args_list[0].kwargs["k"] == BROAD_QUERY_TOP_K
+        assert rag.vector_store_manager.similarity_search.call_args_list[0].kwargs["k"] == max(35, BROAD_QUERY_TOP_K + 20)
 
     def test_focused_query_uses_default_top_k_when_unspecified(self):
         rag = _mock_pipeline()
@@ -77,14 +77,15 @@ class TestAdaptiveTopK:
         rag.query("ASEAN thành lập năm nào?")
 
         rag.vector_store_manager.similarity_search.assert_called_once()
-        assert rag.vector_store_manager.similarity_search.call_args.kwargs["k"] == DEFAULT_TOP_K
+        assert rag.vector_store_manager.similarity_search.call_args.kwargs["k"] == max(35, DEFAULT_TOP_K + 20)
 
     def test_explicit_top_k_is_preserved(self):
         rag = _mock_pipeline()
 
         rag.query("Phân tích các công trình lý luận về vai trò", k=5)
 
-        assert rag.vector_store_manager.similarity_search.call_args_list[0].kwargs["k"] == 5
+        assert rag.vector_store_manager.similarity_search.call_args_list[0].kwargs["k"] == max(35, 5 + 20)
+
 
 
 class TestKeywordSupplement:
@@ -105,6 +106,14 @@ class TestKeywordSupplement:
         rag.query("ASEAN thành lập năm nào?")
 
         rag.vector_store_manager.keyword_search.assert_not_called()
+
+    def test_keyword_supplement_does_not_add_domain_canned_queries(self):
+        queries = RAGPipeline._build_keyword_supplement_queries(
+            "Các công trình nghiên cứu về vai trò của ASEAN trong khu vực Đông Á"
+        )
+
+        assert "công trình liên quan vai trò chủ thể quan hệ quốc tế" not in queries
+        assert "vai trò chủ thể quan hệ quốc tế chịu ảnh hưởng" not in queries
 
 
 class TestBroadQueryDecomposition:
@@ -149,6 +158,20 @@ class TestBroadQueryDecomposition:
         )
 
         assert facets == []
+
+    def test_outline_seed_search_finds_outline_chunks_before_facet_search(self):
+        outline_doc = self._outline_doc()
+        rag = _mock_pipeline()
+        rag.vector_store_manager.keyword_search.return_value = [outline_doc]
+
+        seed_docs = rag._outline_seed_search(
+            "Các công trình lý luận về vai trò trong quan hệ quốc tế",
+            "broad",
+        )
+
+        assert seed_docs == [outline_doc]
+        first_query = rag.vector_store_manager.keyword_search.call_args_list[0].kwargs["query"]
+        assert first_query == "Các mục chính trong tài liệu"
 
     def test_decomposed_retrieval_fetches_each_facet_without_canned_answer(self):
         outline_doc = self._outline_doc()
@@ -213,6 +236,87 @@ class TestBroadQueryDecomposition:
         assert docs == []
 
 
+class TestEvidenceRerank:
+    def test_rerank_prioritizes_structural_and_lexical_evidence(self):
+        rag = _mock_pipeline()
+        question = "Các công trình nghiên cứu về vai trò của ASEAN trong khu vực Đông Á"
+        generic = _doc(
+            "ASEAN có vai trò trung tâm trong hợp tác khu vực Đông Á.",
+            "generic.pdf",
+            1,
+        )
+        evidence = _doc(
+            "Kalevi J. Holsti, John Gerard Ruggie và Peter J. Katzenstein "
+            "được sử dụng làm nền tảng nghiên cứu vai trò chủ thể quốc tế.",
+            "evidence.pdf",
+            2,
+        )
+        evidence.metadata["section_title"] = (
+            "Các công trình liên quan đến vai trò chủ thể quan hệ quốc tế "
+            "chịu ảnh hưởng của Lý thuyết Vai trò (Role theory)"
+        )
+        evidence.metadata["retrieval_group"] = evidence.metadata["section_title"]
+
+        ranked = rag._rerank_retrieved_documents(question, [generic, evidence], "broad")
+
+        assert ranked[0] == evidence
+
+    def test_context_selection_balances_retrieval_groups(self):
+        rag = _mock_pipeline()
+        docs = []
+        for index in range(5):
+            doc = _doc(f"Nội dung nhóm hiện thực {index}", "a.pdf", index)
+            doc.metadata["retrieval_group"] = "Chủ nghĩa Hiện thực"
+            docs.append(doc)
+        for index in range(2):
+            doc = _doc(f"Nội dung nhóm tự do {index}", "b.pdf", index)
+            doc.metadata["retrieval_group"] = "Chủ nghĩa Tự do"
+            docs.append(doc)
+
+        selected = rag._select_context_documents(
+            docs,
+            "broad",
+            question="Các công trình nghiên cứu về vai trò",
+        )
+        groups = [doc.metadata.get("retrieval_group") for doc in selected[:4]]
+
+        assert "Chủ nghĩa Hiện thực" in groups
+        assert "Chủ nghĩa Tự do" in groups
+        assert groups.count("Chủ nghĩa Hiện thực") < 4
+
+    def test_eval_checks_expected_evidence_in_context(self):
+        outline_doc = TestBroadQueryDecomposition._outline_doc()
+        role_doc = _doc(
+            "Holsti và Role theory xuất hiện trong phần lý thuyết vai trò.",
+            "role.pdf",
+            4,
+        )
+        role_doc.metadata["section_title"] = (
+            "Các công trình liên quan đến vai trò chủ thể quan hệ quốc tế "
+            "chịu ảnh hưởng của Lý thuyết Vai trò (Role theory)"
+        )
+        role_doc.metadata["retrieval_group"] = role_doc.metadata["section_title"]
+        sna_doc = _doc(
+            "Phân tích Mạng lưới Xã hội xem xét centrality trong mạng lưới quốc tế.",
+            "sna.pdf",
+            5,
+        )
+        sna_doc.metadata["section_title"] = (
+            "Các công trình liên quan đến vai trò chủ thể quan hệ quốc tế "
+            "chịu ảnh hưởng của Phân tích Mạng lưới Xã hội (SNA)"
+        )
+        sna_doc.metadata["retrieval_group"] = sna_doc.metadata["section_title"]
+        rag = _mock_pipeline([outline_doc, role_doc, sna_doc])
+
+        context = rag.query(
+            "Các công trình nghiên cứu về vai trò của ASEAN trong khu vực Đông Á. "
+            "Công trình của các tác giả nước ngoài"
+        )["context"]
+
+        assert "Holsti" in context
+        assert "Phân tích Mạng lưới Xã hội" in context
+
+
 class TestContextualQueryRewrite:
     def test_clear_question_skips_contextual_rewrite(self):
         rag = _mock_pipeline([_doc("ASEAN thành lập năm 1967.", "asean.pdf", 1)])
@@ -237,7 +341,7 @@ class TestContextualQueryRewrite:
             ],
         )
 
-        assert rag.vector_store_manager.similarity_search.call_args.kwargs["query"] == "Con chó có phải là vật nuôi phổ biến không?"
+        assert rag.vector_store_manager.similarity_search.call_args_list[0].kwargs["query"] == "Con chó có phải là vật nuôi phổ biến không?"
         assert result["rewritten_query"] == "Con chó có phải là vật nuôi phổ biến không?"
 
 
@@ -308,9 +412,9 @@ class TestContextPacking:
 
     def test_context_packing_respects_max_context_chars(self):
         docs = [
-            _doc("A" * (MAX_CONTEXT_CHARS // 2), "a.pdf", 1),
-            _doc("B" * (MAX_CONTEXT_CHARS // 2), "b.pdf", 1),
-            _doc("C" * (MAX_CONTEXT_CHARS // 2), "c.pdf", 1),
+            _doc("A" * (MAX_CONTEXT_CHARS // 3), "a.pdf", 1),
+            _doc("B" * (MAX_CONTEXT_CHARS // 3), "b.pdf", 1),
+            _doc("C" * (MAX_CONTEXT_CHARS // 3), "c.pdf", 1),
         ]
         rag = _mock_pipeline(docs)
 
@@ -319,6 +423,7 @@ class TestContextPacking:
         assert len(context) <= MAX_CONTEXT_CHARS
         assert "[Nguồn: a.pdf]" in context
         assert "[Nguồn: b.pdf]" in context
+
 
 
 def test_app_prompt_is_academic_and_preserves_memory_context():

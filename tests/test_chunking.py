@@ -401,6 +401,36 @@ class TestAdaptiveChunkingPipeline:
         assert "Lý thuyết Vai trò" in outline_text
         assert "Phân tích Mạng lưới Xã hội" in outline_text
 
+    def test_recursive_section_metadata_resets_at_new_chapter(self):
+        """Academic section labels must not leak into later unrelated chapters."""
+        pipeline = AdaptiveChunkingPipeline(
+            strategy="recursive",
+            fallback_chunk_size=360,
+            fallback_chunk_overlap=0,
+        )
+        text = (
+            f"{SAMPLE_ACADEMIC_OUTLINE_TEXT}\n\n"
+            "CHƯƠNG 2: CƠ SỞ THỰC TIỄN VỀ ASEAN\n\n"
+            "ASEAN được hình thành và phát triển trong bối cảnh khu vực Đông Nam Á "
+            "có nhiều biến động về an ninh, chính trị và hợp tác phát triển."
+        )
+
+        chunks = pipeline.chunk_text(text, source_metadata={"source": "lats.pdf"})
+        asean_chunks = [
+            chunk for chunk in chunks
+            if "ASEAN được hình thành" in chunk.page_content
+        ]
+
+        assert asean_chunks
+        assert all(
+            "Phân tích Mạng lưới Xã hội" not in str(chunk.metadata.get("section_title") or "")
+            for chunk in asean_chunks
+        )
+        assert any(
+            str(chunk.metadata.get("chapter_title") or "").startswith("CHƯƠNG 2")
+            for chunk in asean_chunks
+        )
+
 
 class TestDocumentProcessorOutlineIngestion:
     """Test production ingestion path used by UI/scripts."""

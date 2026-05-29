@@ -15,6 +15,7 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     datefmt="%H:%M:%S",
 )
+logger = logging.getLogger(__name__)
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -325,14 +326,14 @@ def init_chat_store():
 def build_system_prompt_with_summary(summary: str) -> str:
     """Build response instruction with persistent rolling summary context."""
     base_prompt = (
-        "Bạn là trợ lý học thuật chuyên phân tích tài liệu Quan hệ Quốc tế (QHQT). "
+        "Bạn là trợ lý ảo chuyên nghiệp hỗ trợ giải đáp chính sách nội bộ của Công ty TNHH An Phát Digital. "
         "Hãy trả lời đúng trọng tâm câu hỏi, dựa trên ngữ cảnh truy xuất được từ tài liệu. "
         "Với câu hỏi tổng hợp hoặc phân tích, phải bao quát đầy đủ các ý chính có trong context, "
-        "nhóm ý rõ ràng và giải thích quan hệ giữa các luận điểm thay vì chỉ liệt kê tên mục. "
+        "nhóm ý rõ ràng và giải thích chi tiết các quy định, con số hoặc quy trình thay vì chỉ liệt kê tên mục. "
         "Nếu context có các header [GROUP: ...], phải trả lời lần lượt theo từng nhóm đó; "
-        "nhóm nào thiếu dữ liệu thì nói rõ context chưa đủ, không tự bổ sung công trình ngoài context. "
+        "nhóm nào thiếu dữ liệu thì nói rõ context chưa đủ, không tự ý suy diễn hoặc bổ sung thông tin ngoài context. "
         "Nếu context thiếu dữ liệu hoặc chưa đủ thông tin để kết luận một phần nào đó, hãy nói rõ giới hạn này. "
-        "Luôn trả lời bằng tiếng Việt, mạch lạc, có phân tích, không bịa thêm ngoài tài liệu."
+        "Luôn trả lời bằng tiếng Việt, mạch lạc, khách quan, có phân tích cụ thể, không bịa thêm ngoài tài liệu."
     )
 
     summary_text = (summary or "").strip()
@@ -493,11 +494,12 @@ Quy tắc:
 - Trả về JSON array, mỗi phần tử có: memory_type, content, confidence (0..1).
 - Tối đa 3 memory.
 - Nếu không có memory phù hợp, trả về []
+- Bắt buộc: Nội dung (content) PHẢI ĐƯỢC VIẾT HOÀN TOÀN BẰNG TIẾNG VIỆT. Tuyệt đối không dùng tiếng Anh, tiếng Trung hay bất kỳ ngôn ngữ nào khác.
 
 Hội thoại:
 {history_block}
 
-Trả về JSON duy nhất:"""
+Trả về JSON duy nhất (chỉ tiếng Việt):"""
 
     try:
         raw = rag.llm_manager.invoke(memory_prompt).strip()
@@ -526,10 +528,15 @@ Trả về JSON duy nhất:"""
     for item in parsed[:5]:
         if not isinstance(item, dict):
             continue
+        content = item.get("content", "")
+        # Filter out non-Vietnamese memory (CJK / Chinese characters)
+        if any("\u4e00" <= ch <= "\u9fff" for ch in content):
+            logger.warning("[memory] Skipping non-Vietnamese memory (CJK detected): %s", content[:80])
+            continue
         result.append(
             {
                 "memory_type": item.get("memory_type", ""),
-                "content": item.get("content", ""),
+                "content": content,
                 "confidence": item.get("confidence", 0.5),
             }
         )
@@ -772,18 +779,29 @@ def main():
                 st.caption("Chưa có cuộc chat nào")
             for conv in conversations:
                 conv_title = conv["title"]
-                if st.button(f"💬 {conv_title}", key=f"conv_{conv['id']}", use_container_width=True):
-                    st.session_state.current_conversation_id = conv["id"]
-                    st.session_state.messages = store.get_messages(
-                        st.session_state.auth_user_id,
-                        conv["id"],
-                    )
-                    st.session_state.rolling_summary = store.get_conversation_summary(
-                        st.session_state.auth_user_id,
-                        conv["id"],
-                    )
-                    st.session_state.chat_started = bool(st.session_state.messages)
-                    st.rerun()
+                col_conv, col_del = st.columns([5, 1])
+                with col_conv:
+                    if st.button(f"💬 {conv_title}", key=f"conv_{conv['id']}", use_container_width=True):
+                        st.session_state.current_conversation_id = conv["id"]
+                        st.session_state.messages = store.get_messages(
+                            st.session_state.auth_user_id,
+                            conv["id"],
+                        )
+                        st.session_state.rolling_summary = store.get_conversation_summary(
+                            st.session_state.auth_user_id,
+                            conv["id"],
+                        )
+                        st.session_state.chat_started = bool(st.session_state.messages)
+                        st.rerun()
+                with col_del:
+                    if st.button("🗑️", key=f"del_{conv['id']}", help="Xóa cuộc trò chuyện này"):
+                        store.delete_conversation(st.session_state.auth_user_id, conv["id"])
+                        if st.session_state.current_conversation_id == conv["id"]:
+                            st.session_state.current_conversation_id = None
+                            st.session_state.messages = []
+                            st.session_state.rolling_summary = ""
+                            st.session_state.chat_started = False
+                        st.rerun()
 
             with st.expander("🧠 User memories", expanded=False):
                 if not st.session_state.user_memories:
@@ -925,6 +943,7 @@ def main():
                             chat_history=st.session_state.messages[:-1],
                             on_complete=stream_result.update,
                             access_filter=access_filter,
+                            rolling_summary=st.session_state.get("rolling_summary"),
                         ):
                             displayed_text += token
                             message_placeholder.markdown(displayed_text + "▌")
@@ -939,6 +958,7 @@ def main():
                             system_prompt=system_prompt,
                             chat_history=st.session_state.messages[:-1],
                             access_filter=access_filter,
+                            rolling_summary=st.session_state.get("rolling_summary"),
                         )
                         response = result["answer"]
                         sources = result.get("sources", [])
@@ -950,6 +970,7 @@ def main():
                         system_prompt=system_prompt,
                         chat_history=st.session_state.messages[:-1],
                         access_filter=access_filter,
+                        rolling_summary=st.session_state.get("rolling_summary"),
                     )
                     response = result["answer"]
                     sources = result.get("sources", [])

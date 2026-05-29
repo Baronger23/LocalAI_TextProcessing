@@ -242,7 +242,7 @@ Ký bởi: Ban lãnh đạo công ty ABC
     processor = DocumentProcessor()
     
     # Test chunking
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix='.txt', delete=False) as f:
         f.write(long_text)
         temp_file = f.name
     
@@ -294,37 +294,55 @@ def test_postgres_insertion_deduplication():
         backend="postgres"
     )
     
-    # Add documents
-    print(f"\n📊 DATABASE INSERTION TEST")
-    print(f"Adding {len(documents)} chunks to PostgreSQL...")
-    
-    ids = vector_store.add_documents(documents)
-    
-    print(f"Inserted IDs: {ids}")
-    print(f"✅ Documents inserted")
-    
-    # Query back
-    with vector_store._get_postgres_connection() as conn:
-        conn_temp = conn
-        result = conn.execute(
-            f"SELECT COUNT(*) as cnt FROM {vector_store.postgres_schema}.{vector_store.postgres_table_name}"
-        ).fetchone()
+    try:
+        # Add documents
+        print(f"\n📊 DATABASE INSERTION TEST")
+        print(f"Adding {len(documents)} chunks to PostgreSQL...")
         
-        chunk_count = result["cnt"] if result else 0
-        print(f"Chunks in database: {chunk_count}")
+        ids = vector_store.add_documents(documents)
         
-        # Show chunk content_hash info
-        rows = conn.execute(
-            f"""
-            SELECT content_hash, content FROM {vector_store.postgres_schema}.{vector_store.postgres_table_name}
-            LIMIT 10
-            """
-        ).fetchall()
+        print(f"Inserted IDs: {ids}")
+        print(f"✅ Documents inserted")
         
-        print(f"\nChunk samples (content_hash, content_length):")
-        for row in rows:
-            content_len = len(row.get("content", ""))
-            print(f"  {row.get('content_hash', 'N/A')[:16]}... : {content_len} chars")
+        # Query back
+        with vector_store._get_postgres_connection() as conn:
+            conn_temp = conn
+            result = conn.execute(
+                f"SELECT COUNT(*) as cnt FROM {vector_store.postgres_schema}.{vector_store.postgres_table_name}"
+            ).fetchone()
+            
+            chunk_count = result["cnt"] if result else 0
+            print(f"Chunks in database: {chunk_count}")
+            
+            # Show chunk content_hash info
+            rows = conn.execute(
+                f"""
+                SELECT content_hash, content FROM {vector_store.postgres_schema}.{vector_store.postgres_table_name}
+                LIMIT 10
+                """
+            ).fetchall()
+            
+            print(f"\nChunk samples (content_hash, content_length):")
+            for row in rows:
+                content_len = len(row.get("content", ""))
+                print(f"  {row.get('content_hash', 'N/A')[:16]}... : {content_len} chars")
+    finally:
+        # Cleanup test documents to prevent database pollution
+        try:
+            with vector_store._get_postgres_connection() as conn:
+                conn.execute(
+                    f"DELETE FROM {vector_store.postgres_schema}.{vector_store.postgres_table_name} "
+                    "WHERE document_id IN (SELECT id FROM public.documents WHERE file_name = %s)",
+                    ("test_document.txt",)
+                )
+                conn.execute(
+                    "DELETE FROM public.documents WHERE file_name = %s",
+                    ("test_document.txt",)
+                )
+                print("🧹 Cleaned up test_document.txt chunks from database.")
+        except Exception as e:
+            print(f"⚠️ Error cleaning up test documents: {e}")
+
 
 
 if __name__ == "__main__":

@@ -285,8 +285,17 @@ class AdaptiveChunkingPipeline:
         r"^[\s•\-]*((?:Các công trình liên quan đến vai trò chủ thể quan hệ quốc tế\s+)?chịu ảnh hưởng của\s+.+)$",
         re.IGNORECASE | re.MULTILINE,
     )
+    _NUMBERED_HEADING_RE = re.compile(
+        r"^\s*(\d+(?:\.\d+){0,3})\.?\s+([^\s].*)$",
+        re.MULTILINE
+    )
     _CHAPTER_HEADING_RE = re.compile(
         r"^\s*((?:CHƯƠNG|Chương)\s+(?:[IVXLCDM]+|\d+)[:\.\s].+)$",
+        re.IGNORECASE | re.MULTILINE,
+    )
+    _SECTION_BOUNDARY_RE = re.compile(
+        r"^\s*(?:CHƯƠNG|Chương)\s+(?:[IVXLCDM]+|\d+)[:\.\s].+"
+        r"|^\s*(?:KẾT\s+LUẬN|TÀI\s+LIỆU\s+THAM\s+KHẢO|DANH\s+MỤC)\b",
         re.IGNORECASE | re.MULTILINE,
     )
 
@@ -306,54 +315,155 @@ class AdaptiveChunkingPipeline:
         outline_titles: List[str] = []
         current_chapter = ""
         current_section = ""
+        outline_chapter = ""
 
-        for chunk in chunks:
-            text = chunk.page_content
-            normalized_text = self._normalize_ocr_heading_text(text)
-            chapter_match = self._CHAPTER_HEADING_RE.search(normalized_text)
-            if chapter_match:
-                current_chapter = self._clean_heading(chapter_match.group(1))
-
-            section_matches = [
-                self._clean_heading(match)
-                for match in self._ACADEMIC_HEADING_RE.findall(normalized_text)
-            ]
-            if section_matches:
-                current_section = " | ".join(section_matches)
-                for section_title in section_matches:
-                    if section_title not in outline_titles:
-                        outline_titles.append(section_title)
-
-            metadata = dict(chunk.metadata or {})
-            if current_chapter:
-                metadata.setdefault("chapter_title", current_chapter)
-            if current_section:
-                metadata["section_title"] = current_section
-                metadata["outline_path"] = self._join_outline_path(
-                    current_chapter, current_section
+        for raw_chunk in chunks:
+            for chunk in self._split_chunk_on_late_section_boundary(raw_chunk):
+                enriched_chunk = self._enrich_single_recursive_chunk(
+                    chunk=chunk,
+                    outline_titles=outline_titles,
+                    current_chapter=current_chapter,
+                    current_section=current_section,
                 )
-                metadata.setdefault("chunk_type", "content")
-                page_content = self._contextualize_chunk_content(
-                    text=text,
-                    chapter_title=current_chapter,
-                    section_title=current_section,
-                )
-            else:
-                metadata.setdefault("outline_path", current_chapter or "")
-                metadata.setdefault("chunk_type", "content")
-                page_content = text
-
-            enriched.append(Document(page_content=page_content, metadata=metadata))
+                enriched.append(enriched_chunk["document"])
+                current_chapter = enriched_chunk["current_chapter"]
+                current_section = enriched_chunk["current_section"]
+                if enriched_chunk["outline_chapter"] and not outline_chapter:
+                    outline_chapter = enriched_chunk["outline_chapter"]
 
         if len(outline_titles) >= 2:
             outline_doc = self._build_outline_document(
                 outline_titles=outline_titles,
                 base_metadata=dict(chunks[0].metadata or {}),
-                chapter_title=current_chapter,
+                chapter_title=outline_chapter,
             )
             return [outline_doc] + enriched
 
         return enriched
+
+    def _enrich_single_recursive_chunk(
+        self,
+        chunk: Document,
+        outline_titles: List[str],
+        current_chapter: str,
+        current_section: str,
+    ) -> Dict[str, Any]:
+        """Attach outline metadata to one recursive chunk."""
+        outline_chapter = ""
+        text = chunk.page_content
+        normalized_text = self._normalize_ocr_heading_text(text)
+        chapter_match = self._CHAPTER_HEADING_RE.search(normalized_text)
+        if chapter_match:
+            detected_chapter = self._clean_heading(chapter_match.group(1))
+            if detected_chapter != current_chapter:
+                current_chapter = detected_chapter
+                current_section = ""
+        elif current_section and self._SECTION_BOUNDARY_RE.search(normalized_text):
+            current_section = ""
+
+        # Find all headings in this chunk (numbered headings and specific academic headings)
+        numbered_matches = []
+        for match in self._NUMBERED_HEADING_RE.finditer(normalized_text):
+            if not self._is_valid_heading(match):
+                continue
+            num_part = match.group(1).strip()
+            title_part = match.group(2).strip()
+            full_heading = self._clean_heading(f"{num_part} {title_part}")
+            numbered_matches.append(full_heading)
+
+        academic_matches = [
+            self._clean_heading(match)
+            for match in self._ACADEMIC_HEADING_RE.findall(normalized_text)
+        ]
+
+        if numbered_matches:
+            current_section = numbered_matches[-1]
+            outline_chapter = current_chapter
+            for heading in numbered_matches:
+                if heading not in outline_titles:
+                    outline_titles.append(heading)
+        elif academic_matches:
+            current_section = " | ".join(academic_matches)
+            outline_chapter = current_chapter
+            for heading in academic_matches:
+                if heading not in outline_titles:
+                    outline_titles.append(heading)
+
+        metadata = dict(chunk.metadata or {})
+        if current_chapter:
+            metadata.setdefault("chapter_title", current_chapter)
+        if current_section:
+            metadata["section_title"] = current_section
+            metadata["outline_path"] = self._join_outline_path(
+                current_chapter, current_section
+            )
+            metadata.setdefault("chunk_type", "content")
+            page_content = self._contextualize_chunk_content(
+                text=text,
+                chapter_title=current_chapter,
+                section_title=current_section,
+            )
+        else:
+            metadata.setdefault("outline_path", current_chapter or "")
+            metadata.setdefault("chunk_type", "content")
+            page_content = text
+
+        return {
+            "document": Document(page_content=page_content, metadata=metadata),
+            "current_chapter": current_chapter,
+            "current_section": current_section,
+            "outline_chapter": outline_chapter,
+        }
+
+    def _split_chunk_on_late_section_boundary(self, chunk: Document) -> List[Document]:
+        """Split a recursive chunk if a later chapter/reference boundary appears."""
+        text = chunk.page_content or ""
+        normalized_text = self._normalize_ocr_heading_text(text)
+        
+        all_headings = []
+        for m in self._ACADEMIC_HEADING_RE.finditer(normalized_text):
+            all_headings.append(m)
+        for m in self._NUMBERED_HEADING_RE.finditer(normalized_text):
+            if self._is_valid_heading(m):
+                all_headings.append(m)
+            
+        if not all_headings:
+            return [chunk]
+
+        all_headings.sort(key=lambda m: m.start())
+        last_section_end = all_headings[-1].end()
+
+        for boundary_match in self._SECTION_BOUNDARY_RE.finditer(normalized_text):
+            split_at = boundary_match.start()
+            if split_at <= last_section_end + 20:
+                continue
+            if split_at <= 0 or split_at >= len(text) - 10:
+                continue
+            before = text[:split_at].rstrip()
+            after = text[split_at:].lstrip()
+            if not before or not after:
+                continue
+            metadata = dict(chunk.metadata or {})
+            return [
+                Document(page_content=before, metadata=metadata),
+                Document(page_content=after, metadata=dict(chunk.metadata or {})),
+            ]
+        return [chunk]
+
+    @staticmethod
+    def _is_valid_heading(match: re.Match) -> bool:
+        """Validate if a regex match is a genuine heading or just a list item."""
+        num_part = match.group(1).strip()
+        title_part = match.group(2).strip()
+        if "." not in num_part:
+            # Single digit heading (e.g. "6")
+            if len(title_part) > 60:
+                return False
+            if title_part.endswith(".") or title_part.endswith(";") or title_part.endswith(","):
+                return False
+            if any(p in title_part for p in [". ", ", ", "; "]):
+                return False
+        return True
 
     @staticmethod
     def _clean_heading(heading: str) -> str:

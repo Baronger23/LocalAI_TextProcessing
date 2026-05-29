@@ -224,6 +224,25 @@ class ChatStore:
             result.append(r)
         return result
 
+    def delete_conversation(self, user_id: str, conversation_id: str) -> None:
+        """Delete a conversation session (and its messages via CASCADE)."""
+        def _op(conn: psycopg.Connection) -> None:
+            conn.execute(
+                """
+                DELETE FROM chat_sessions
+                WHERE id = %s AND user_id = %s
+                """,
+                (conversation_id, user_id),
+            )
+            self._log_audit_with_conn(
+                conn,
+                user_id,
+                "conversation_delete",
+                {"conversation_id": conversation_id},
+            )
+
+        self._run_with_retry(_op)
+
     def _user_owns_conversation(self, user_id: str, conversation_id: str) -> bool:
         def _op(conn: psycopg.Connection):
             return conn.execute(

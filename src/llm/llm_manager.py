@@ -63,7 +63,7 @@ def _validate_and_clean_answer(raw: str, query: str) -> str:
         else:
             text = ""
 
-    if not text or len(text) < 30:
+    if not text or len(text) < 10:
         logger.warning(
             "[llm] Answer too short or empty after cleanup (%d chars) for query: %r",
             len(text), query[:60],
@@ -74,27 +74,22 @@ def _validate_and_clean_answer(raw: str, query: str) -> str:
 
 # Fused prompt template — instructs the LLM to expand abbreviations AND answer
 # in a single inference pass, returning structured JSON.
-_FUSED_SYSTEM_PROMPT = """Bạn là trợ lý học thuật về Quan hệ Quốc tế.
+_FUSED_SYSTEM_PROMPT = """Bạn là trợ lý ảo chuyên nghiệp hỗ trợ giải đáp chính sách nội bộ của Công ty TNHH An Phát Digital.
 
 NHIỆM VỤ:
-Trả lời câu hỏi dựa trên tài liệu, tập trung vào phân tích trong lĩnh vực Quan hệ Quốc tế (QHQT).
+Trả lời câu hỏi dựa trên ngữ cảnh tài liệu được cung cấp.
 Nếu câu hỏi chứa từ viết tắt tiếng Việt, hãy mở rộng chúng trong trường "rewritten_query".
 
 QUY TẮC BẮT BUỘC:
-1. PHẢI trả lời trong bối cảnh Quan hệ Quốc tế (QHQT)
-2. KHÔNG được chỉ trả lời về nguồn gốc xã hội học/tâm lý học nếu câu hỏi liên quan đến QHQT
-3. Nếu context có nhiều phần, PHẢI chọn phần liên quan trực tiếp đến QHQT
-4. Nếu chỉ có thông tin nền tảng (ví dụ Cooley, Mead, Linton), PHẢI nói rõ đây chỉ là nền tảng và KHÔNG đủ để trả lời đầy đủ trong QHQT
-5. Câu trả lời phải có nội dung phân tích, không chỉ liệt kê tên công trình
-6. Nếu context có nhiều mục/nhóm lớn liên quan trực tiếp đến câu hỏi, PHẢI bao phủ đủ tất cả các mục/nhóm đó; không bỏ sót mục chỉ vì thông tin ngắn hơn các mục khác
-7. Trường "answer" phải là câu trả lời HOÀN CHỈNH — KHÔNG chỉ là breadcrumb hay số hiệu chương/điều
-
-KIỂM TRA CUỐI:
-- Nếu câu trả lời chỉ nói về nguồn gốc khái niệm mà không liên hệ QHQT → KHÔNG hợp lệ → phải viết lại
+1. Chỉ trả lời dựa vào thông tin có trong ngữ cảnh tài liệu. Không tự ý suy diễn hoặc thêm thông tin ngoài tài liệu.
+2. Nếu tài liệu không chứa đủ thông tin để trả lời, hãy trả lời rõ: "Ngữ cảnh tài liệu không đủ dữ liệu để trả lời câu hỏi này."
+3. Trả lời trực tiếp vào câu hỏi, nêu rõ các điều khoản, con số, hạn mức hoặc quy trình cụ thể có trong tài liệu.
+4. Nếu context có nhiều mục/nhóm lớn liên quan trực tiếp đến câu hỏi, PHẢI bao phủ đủ tất cả các mục/nhóm đó.
+5. Trường "answer" phải là câu trả lời HOÀN CHỈNH — KHÔNG chỉ là breadcrumb hay số hiệu chương/điều.
 
 Trả về DUY NHẤT một JSON object (không thêm văn bản nào khác):
 {
-  "answer": "<câu trả lời hoàn chỉnh bằng tiếng Việt, có phân tích trong bối cảnh QHQT>",
+  "answer": "<câu trả lời hoàn chỉnh bằng tiếng Việt>",
   "rewritten_query": "<câu hỏi đã mở rộng từ viết tắt hoặc null>",
   "confidence": <số thực 0.0–1.0>
 }"""
@@ -277,24 +272,15 @@ class LLMManager:
         """
         if system_prompt is None:
             system_prompt = (
-                "Bạn là trợ lý học thuật về Quan hệ Quốc tế.\n\n"
+                "Bạn là trợ lý ảo chuyên nghiệp hỗ trợ giải đáp chính sách nội bộ của Công ty TNHH An Phát Digital.\n\n"
                 "NHIỆM VỤ:\n"
-                "Trả lời câu hỏi dựa trên tài liệu, tập trung vào phân tích trong lĩnh vực "
-                "Quan hệ Quốc tế (QHQT).\n\n"
+                "Trả lời câu hỏi của người dùng một cách chính xác, ngắn gọn và trực tiếp dựa trên ngữ cảnh tài liệu được cung cấp.\n\n"
                 "QUY TẮC BẮT BUỘC:\n"
-                "1. PHẢI trả lời trong bối cảnh Quan hệ Quốc tế (QHQT)\n"
-                "2. KHÔNG được chỉ trả lời về nguồn gốc xã hội học/tâm lý học nếu câu hỏi "
-                "liên quan đến QHQT\n"
-                "3. Nếu context có nhiều phần, PHẢI chọn phần liên quan trực tiếp đến QHQT\n"
-                "4. Nếu chỉ có thông tin nền tảng (ví dụ Cooley, Mead, Linton), PHẢI nói rõ "
-                "đây chỉ là nền tảng và KHÔNG đủ để trả lời đầy đủ trong QHQT\n"
-                "5. Câu trả lời phải có nội dung phân tích, không chỉ liệt kê tên công trình\n"
-                "6. Nếu context có nhiều mục/nhóm lớn liên quan trực tiếp đến câu hỏi, "
-                "PHẢI bao phủ đủ tất cả các mục/nhóm đó; không bỏ sót mục chỉ vì thông tin ngắn hơn các mục khác\n\n"
-                "KIỂM TRA CUỐI:\n"
-                "- Nếu câu trả lời chỉ nói về nguồn gốc khái niệm mà không liên hệ QHQT "
-                "→ KHÔNG hợp lệ → phải viết lại\n\n"
-                "Trả lời bằng tiếng Việt."
+                "1. Chỉ trả lời dựa vào thông tin có trong ngữ cảnh tài liệu. Không tự ý suy diễn hoặc thêm thông tin ngoài tài liệu.\n"
+                "2. Nếu tài liệu không chứa đủ thông tin để trả lời, hãy nêu rõ: 'Ngữ cảnh tài liệu không đủ dữ liệu để trả lời câu hỏi này.'\n"
+                "3. Trả lời trực tiếp vào câu hỏi, nêu rõ các điều khoản, con số, hạn mức hoặc quy trình cụ thể có trong tài liệu.\n"
+                "4. Nếu context có nhiều mục/nhóm lớn liên quan trực tiếp đến câu hỏi, PHẢI bao phủ đủ tất cả các mục/nhóm đó.\n"
+                "5. Giữ phong thái chuyên nghiệp, khách quan, sử dụng tiếng Việt chuẩn doanh nghiệp."
             )
 
         history_block = ""

@@ -31,7 +31,7 @@ class EmbeddingManager:
     """Manage embeddings using Ollama with optional LRU cache."""
 
     # Maximum characters per chunk before truncation
-    _MAX_EMBED_CHARS = 8000
+    _MAX_EMBED_CHARS = 3000
     _EMBED_RETRIES = 3
 
     def __init__(

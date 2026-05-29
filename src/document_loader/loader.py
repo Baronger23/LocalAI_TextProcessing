@@ -76,7 +76,7 @@ class DocumentProcessor:
         try:
             if suffix == ".pdf":
                 return self.load_pdf(str(file_path))
-            elif suffix == ".txt":
+            elif suffix in (".txt", ".md"):
                 return self.load_txt(str(file_path))
             elif suffix == ".docx":
                 # Skip temporary Word files (e.g. ~$filename.docx)
@@ -103,7 +103,7 @@ class DocumentProcessor:
         path = Path(directory_path)
 
         # Collect all supported files
-        supported_extensions = {".pdf", ".txt", ".docx"}
+        supported_extensions = {".pdf", ".txt", ".docx", ".md"}
         all_files = [
             f
             for f in path.rglob("*")
@@ -111,6 +111,7 @@ class DocumentProcessor:
             and f.suffix.lower() in supported_extensions
             and not f.name.startswith("~$")  # Skip temp Word files
         ]
+
 
         if not all_files:
             return []
@@ -219,7 +220,7 @@ class DocumentProcessor:
             file_path = Path(source)
             if file_path.suffix.lower() == ".pdf":
                 documents = self.load_pdf(source)
-            elif file_path.suffix.lower() == ".txt":
+            elif file_path.suffix.lower() in (".txt", ".md"):
                 documents = self.load_txt(source)
             elif file_path.suffix.lower() == ".docx":
                 documents = self.load_docx(source)

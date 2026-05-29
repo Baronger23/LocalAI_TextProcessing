@@ -1,0 +1,53 @@
+{
+  "company": "Công ty TNHH An Phát Digital",
+  "generated_at": "2026-05-27",
+  "purpose": "Canonical rules used to prevent contradictions across the synthetic policy corpus.",
+  "rules": {
+    "approval_matrix": {
+      "procurement_standard": "< 50.000.000 VND: Trưởng phòng phê duyệt, Tài chính tham vấn, SLA 2 ngày làm việc.",
+      "procurement_quotes": "50.000.000-499.999.999 VND: Giám đốc Khối phê duyệt, Procurement tham vấn, SLA 3 ngày làm việc.",
+      "procurement_large": "500.000.000-1.999.999.999 VND: Giám đốc Khối và CFO phê duyệt, SLA 5 ngày làm việc.",
+      "procurement_strategic": ">= 2.000.000.000 VND: CFO và Tổng Giám đốc phê duyệt, SLA 7 ngày làm việc.",
+      "revenue_contract_large": "> 5.000.000.000 VND: CFO và Tổng Giám đốc phê duyệt, Legal và Security tham vấn.",
+      "security_exception": "Ngoại lệ bảo mật bất kỳ: CISO phê duyệt, Data Owner tham vấn, SLA 3 ngày làm việc."
+    },
+    "security": {
+      "password": "Mật khẩu tài khoản thông thường tối thiểu 14 ký tự, bật MFA và không tái sử dụng 10 mật khẩu gần nhất.",
+      "privileged_rotation": "Tài khoản quản trị đặc quyền phải rà soát hàng tháng và xoay vòng bí mật sau tối đa 90 ngày.",
+      "vpn": "Truy cập hệ thống nội bộ từ ngoài văn phòng bắt buộc dùng VPN công ty và thiết bị đã đăng ký MDM.",
+      "screen_lock": "Thiết bị xử lý dữ liệu mật phải khóa màn hình sau 5 phút không hoạt động.",
+      "log_retention": "Log bảo mật mức hệ thống phải lưu tối thiểu 400 ngày."
+    },
+    "privacy": {
+      "dsar": "Yêu cầu truy cập hoặc chỉnh sửa dữ liệu cá nhân phải phản hồi trong 15 ngày làm việc.",
+      "dpia": "Dự án xử lý dữ liệu cá nhân nhạy cảm phải hoàn tất DPIA trước production.",
+      "customer_retention": "Dữ liệu khách hàng không còn hoạt động lưu tối đa 5 năm sau giao dịch cuối cùng, trừ nghĩa vụ pháp lý dài hơn.",
+      "breach_notice": "Sự cố lộ dữ liệu cá nhân mức cao phải báo cáo Ban Điều hành trong vòng 24 giờ kể từ khi xác nhận."
+    },
+    "people": {
+      "annual_leave": "Nhân viên chính thức có 14 ngày nghỉ phép hưởng lương mỗi năm; cấp Manager trở lên có 16 ngày.",
+      "overtime": "Làm thêm giờ không vượt quá 40 giờ mỗi tháng nếu không có phê duyệt của Giám đốc Khối và HRBP.",
+      "hybrid": "Nhân viên hybrid có mặt tại văn phòng tối thiểu 2 ngày mỗi tuần, trừ ngoại lệ HRBP phê duyệt.",
+      "remote_abroad": "Làm việc từ nước ngoài quá 10 ngày làm việc liên tục cần phê duyệt của HR, Legal và quản lý cấp Director."
+    },
+    "finance": {
+      "three_quotes": "Đơn mua hàng từ 50.000.000 VND trở lên phải có tối thiểu 3 báo giá hợp lệ, trừ nhà cung cấp độc quyền đã được CFO chấp thuận.",
+      "po_before_invoice": "Hóa đơn chỉ được thanh toán khi có PO đã phê duyệt trước ngày hóa đơn, trừ chi phí tiện ích định kỳ đã được CFO cho phép.",
+      "advance_settlement": "Tạm ứng phải được quyết toán trong 10 ngày làm việc sau khi hoàn tất hoạt động liên quan.",
+      "payment_term": "Điều khoản thanh toán chuẩn với khách hàng là 30 ngày; điều khoản trên 60 ngày cần CFO phê duyệt."
+    },
+    "operations": {
+      "sev1": "Sự cố SEV-1 phải mở war-room trong vòng 15 phút sau khi phân loại và chỉ định Incident Commander.",
+      "sev2": "Sự cố SEV-2 cần cập nhật stakeholder mỗi 60 phút cho đến khi khôi phục dịch vụ.",
+      "postmortem": "Postmortem cho SEV-1 và SEV-2 phải hoàn tất trong 5 ngày làm việc sau khi đóng sự cố.",
+      "evidence_freeze": "Bằng chứng log của sự cố bảo mật phải đóng băng trong vòng 2 giờ sau khi xác nhận dấu hiệu xâm nhập."
+    },
+    "records": {
+      "approval_evidence": "Bằng chứng phê duyệt, workflow, chữ ký điện tử và email chính thức lưu tối thiểu 7 năm.",
+      "hr_records": "Hồ sơ nhân sự điện tử lưu 10 năm sau ngày chấm dứt hợp đồng; hồ sơ kỷ luật nghiêm trọng lưu 15 năm.",
+      "exception_register": "Ngoại lệ phải có ngày hết hạn, người chịu trách nhiệm, biện pháp giảm thiểu và lưu 3 năm sau ngày đóng."
+    }
+  },
+  "document_count": 60,
+  "total_main_document_words": 663790
+}

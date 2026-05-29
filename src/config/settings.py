@@ -79,8 +79,10 @@ QUERY_REWRITE_ENABLED = os.getenv("QUERY_REWRITE_ENABLED", "false").lower() == "
 MMR_ENABLED = os.getenv("MMR_ENABLED", "true").lower() == "true"
 # λ: 1.0 = pure relevance, 0.0 = pure diversity. 0.8 is focused on high relevance.
 MMR_LAMBDA = float(os.getenv("MMR_LAMBDA", "0.8"))
-# How many candidates to fetch from DB before MMR filtering down to k
-MMR_FETCH_K = int(os.getenv("MMR_FETCH_K", "30"))
+# How many candidates to fetch from DB before MMR filtering down to k.
+# Increased to 60 to ensure relevant domain-specific chunks (ranked lower due to
+# boilerplate dilution) enter the candidate pool before MMR reranking.
+MMR_FETCH_K = int(os.getenv("MMR_FETCH_K", "60"))
 
 # Ingestion performance settings
 EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "32"))
@@ -167,14 +169,14 @@ EMBEDDING_CACHE_MAX_SIZE = _safe_int("EMBEDDING_CACHE_MAX_SIZE", 1000)
 
 # Extra candidates fetched beyond k in hybrid search to compensate for
 # ranking noise before trimming back to k at the application layer.
-SEARCH_RESULT_BUFFER = _safe_int("SEARCH_RESULT_BUFFER", 5)
+SEARCH_RESULT_BUFFER = _safe_int("SEARCH_RESULT_BUFFER", 20)
 
 # ---------------------------------------------------------------------------
 # Response quality settings
 # ---------------------------------------------------------------------------
 
 # Default retrieval size for focused/fact-style questions.
-DEFAULT_TOP_K = _safe_int("DEFAULT_TOP_K", 8)
+DEFAULT_TOP_K = _safe_int("DEFAULT_TOP_K", 5)
 
 # Retrieval size for broad synthesis/analysis questions that need wider coverage.
 BROAD_QUERY_TOP_K = _safe_int("BROAD_QUERY_TOP_K", 15)
@@ -185,4 +187,4 @@ MAX_CONTEXT_CHARS = _safe_int("MAX_CONTEXT_CHARS", 18000)
 # Add keyword-only retrieval results for broad questions to recover exact
 # headings, names, years, and technical phrases missed by vector search.
 KEYWORD_SUPPLEMENT_ENABLED = _safe_bool("KEYWORD_SUPPLEMENT_ENABLED", True)
-KEYWORD_SUPPLEMENT_TOP_K = _safe_int("KEYWORD_SUPPLEMENT_TOP_K", 8)
+KEYWORD_SUPPLEMENT_TOP_K = _safe_int("KEYWORD_SUPPLEMENT_TOP_K", 5)

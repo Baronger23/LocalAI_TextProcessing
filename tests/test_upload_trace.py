@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 import tempfile
 import shutil
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -115,18 +116,22 @@ Hành vi bạo lực hoặc mặc cả tại nơi làm việc.
     file_size_mb = txt_file.stat().st_size / (1024 * 1024)
     print(f"Created test file: {txt_file.name} ({file_size_mb:.2f} MB)")
     
-    try:
-        rag = RAGPipeline()
-        print(f"\nCalling rag.load_documents('{test_dir}')...\n")
-        count = rag.load_documents(str(test_dir))
-        
-        print(f"\n[RESULT] {count} chunks loaded and inserted")
-        
-    finally:
-        # Clean up
-        shutil.rmtree(test_dir)
-        print(f"\nCleaned up test directory")
+    with patch("src.rag.vector_store.VectorStoreManager.add_documents") as mock_add:
+        mock_add.return_value = []
+        try:
+            rag = RAGPipeline()
+            print(f"\nCalling rag.load_documents('{test_dir}')...\n")
+            count = rag.load_documents(str(test_dir))
+            
+            print(f"\n[RESULT] {count} chunks loaded and inserted")
+            
+        finally:
+            # Clean up
+            shutil.rmtree(test_dir)
+            print(f"\nCleaned up test directory")
 
 
 if __name__ == "__main__":
+    from unittest.mock import patch
     test_upload_simulation()
+

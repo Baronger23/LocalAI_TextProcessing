@@ -162,6 +162,7 @@ class TestMMRRerank:
         mock_conn.__enter__ = lambda s: mock_conn
         mock_conn.__exit__ = MagicMock(return_value=False)
         vsm._get_postgres_connection = MagicMock(return_value=mock_conn)
+        vsm._pool_connection = MagicMock(return_value=mock_conn)
 
         return vsm
 
