@@ -1,18 +1,16 @@
 """
 Tests for the Adaptive + Context-Enriched Chunking module.
 """
-import pytest
 from langchain_core.documents import Document
 
+from src.chunking.chunking_pipeline import AdaptiveChunkingPipeline
+from src.chunking.context_enricher import ContextEnricher
 from src.chunking.vietnamese_chunker import (
-    VietnameseDocumentParser,
     DocumentSection,
     SectionLevel,
+    VietnameseDocumentParser,
 )
-from src.chunking.context_enricher import ContextEnricher
-from src.chunking.chunking_pipeline import AdaptiveChunkingPipeline
 from src.document_loader.loader import DocumentProcessor
-
 
 # ---------------------------------------------------------------------------
 # Sample Vietnamese legal document text for testing

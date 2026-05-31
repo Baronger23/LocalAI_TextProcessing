@@ -70,6 +70,10 @@ class ChatStore:
 
                 ALTER TABLE IF EXISTS user_permission_groups ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
+                ALTER TABLE IF EXISTS group_department_permissions DROP CONSTRAINT IF EXISTS group_department_permissions_pkey;
+                ALTER TABLE IF EXISTS group_department_permissions ADD COLUMN IF NOT EXISTS id UUID DEFAULT gen_random_uuid();
+                ALTER TABLE IF EXISTS group_department_permissions ADD COLUMN IF NOT EXISTS department TEXT;
+                ALTER TABLE IF EXISTS group_department_permissions ALTER COLUMN department_id DROP NOT NULL;
                 ALTER TABLE IF EXISTS group_department_permissions ADD COLUMN IF NOT EXISTS max_sensitivity TEXT NOT NULL DEFAULT 'internal';
                 ALTER TABLE IF EXISTS group_department_permissions ADD COLUMN IF NOT EXISTS can_view_all_documents BOOLEAN NOT NULL DEFAULT FALSE;
                 ALTER TABLE IF EXISTS group_department_permissions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
@@ -108,6 +112,8 @@ class ChatStore:
                 CREATE INDEX IF NOT EXISTS idx_user_permission_groups_user ON user_permission_groups(user_id);
                 CREATE INDEX IF NOT EXISTS idx_user_permission_groups_group ON user_permission_groups(group_id);
                 CREATE INDEX IF NOT EXISTS idx_group_department_permissions_group ON group_department_permissions(group_id);
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_group_department_permissions_group_department
+                    ON group_department_permissions(group_id, department);
                 """
             )
 
@@ -256,7 +262,7 @@ class ChatStore:
         packed_hash = row["hashed_password"]
         if "$" not in packed_hash:
             return None
-            
+
         salt_hex, stored_hash = packed_hash.split("$", 1)
         candidate_hash = self._hash_password(password, salt_hex)
         if not hmac.compare_digest(candidate_hash, stored_hash):
@@ -804,7 +810,7 @@ class ChatStore:
         """Write basic audit records for auth and data actions."""
         if details is None:
             details = {}
-            
+
         def _op(conn: psycopg.Connection) -> None:
             self._log_audit_with_conn(conn, user_id, event, details)
 
@@ -965,7 +971,7 @@ class ChatStore:
                     """,
                     (conversation_id, role, content, citations_json),
                 ).fetchone()
-                
+
                 conn.execute(
                     """
                     UPDATE chat_sessions
@@ -974,7 +980,7 @@ class ChatStore:
                     """,
                     (conversation_id,),
                 )
-                
+
                 message_id = str(row["id"])
                 self._log_audit_with_conn(
                     conn,
@@ -1211,7 +1217,7 @@ class ChatStore:
 
             # Query rows
             select_query = f"""
-                SELECT 
+                SELECT
                     a.id,
                     a.event,
                     a.details,
@@ -1228,7 +1234,7 @@ class ChatStore:
                 LIMIT %s OFFSET %s
             """
             rows = conn.execute(select_query, params + [limit, offset]).fetchall()
-            
+
             logs = []
             for row in rows:
                 r = dict(row)

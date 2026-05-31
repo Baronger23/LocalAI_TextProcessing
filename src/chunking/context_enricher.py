@@ -5,15 +5,13 @@ the LLM always knows the full hierarchical origin of the text.
 Example output prefix:
   [Tài liệu: Nội quy lao động] > [Chương II: Kỷ luật lao động] > [Điều 15: Đi trễ]
 """
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
-from langchain_core.documents import Document
 from langchain_community.vectorstores.utils import filter_complex_metadata
+from langchain_core.documents import Document
 
 from src.chunking.vietnamese_chunker import (
     DocumentSection,
-    SectionLevel,
-    VietnameseDocumentParser,
 )
 
 
@@ -96,7 +94,7 @@ class ContextEnricher:
         temp_doc = Document(page_content="", metadata=source_metadata)
         filtered_docs = filter_complex_metadata([temp_doc])
         filtered_source = filtered_docs[0].metadata
-        
+
         # Build metadata with enricher's breadcrumb taking priority
         meta: Dict[str, Any] = {
             **filtered_source,

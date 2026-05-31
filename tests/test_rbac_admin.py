@@ -5,8 +5,10 @@ from __future__ import annotations
 import pytest
 
 from src.config import POSTGRES_CONNECTION_STRING
-from src.storage.chat_store import ChatStore
 from src.rag.vector_store import VectorStoreManager
+from src.storage.chat_store import ChatStore
+
+pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 
 
 @pytest.fixture

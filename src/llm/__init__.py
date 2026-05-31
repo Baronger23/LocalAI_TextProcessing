@@ -1,4 +1,4 @@
 """
 LLM package.
 """
-from .llm_manager import LLMManager
+from .llm_manager import LLMManager as LLMManager

@@ -10,25 +10,25 @@ Falls back to RecursiveCharacterTextSplitter when no Vietnamese
 legal structure is detected.
 """
 import re
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from src.chunking.context_enricher import ContextEnricher
 from src.chunking.vietnamese_chunker import (
     DocumentSection,
     SectionLevel,
     VietnameseDocumentParser,
 )
-from src.chunking.context_enricher import ContextEnricher
 from src.config import (
-    CHUNK_SIZE,
     CHUNK_OVERLAP,
-    MAX_CHUNK_SIZE,
-    MIN_CHUNK_SIZE,
+    CHUNK_SIZE,
+    CHUNK_STRATEGY,
     CONTEXT_DEPTH,
     CONTEXT_PREFIX_ENABLED,
-    CHUNK_STRATEGY,
+    MAX_CHUNK_SIZE,
+    MIN_CHUNK_SIZE,
 )
 
 
@@ -419,14 +419,14 @@ class AdaptiveChunkingPipeline:
         """Split a recursive chunk if a later chapter/reference boundary appears."""
         text = chunk.page_content or ""
         normalized_text = self._normalize_ocr_heading_text(text)
-        
+
         all_headings = []
         for m in self._ACADEMIC_HEADING_RE.finditer(normalized_text):
             all_headings.append(m)
         for m in self._NUMBERED_HEADING_RE.finditer(normalized_text):
             if self._is_valid_heading(m):
                 all_headings.append(m)
-            
+
         if not all_headings:
             return [chunk]
 

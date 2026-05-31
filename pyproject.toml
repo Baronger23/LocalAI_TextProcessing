@@ -27,9 +27,11 @@ skip = [".venv", "venv"]
 [tool.ruff]
 line-length = 88
 target-version = "py310"
+exclude = [".venv", "venv"]
+
+[tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
 ignore = ["E501"]
-exclude = [".venv", "venv"]
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]

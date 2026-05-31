@@ -4,17 +4,18 @@ from pathlib import Path
 # Thêm thư mục gốc vào PYTHONPATH
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.storage import ChatStore
 from src.rag import RAGPipeline
+from src.storage import ChatStore
+
 
 def main():
     print("1. Khởi tạo ChatStore & RAGPipeline...")
     store = ChatStore()
     rag = RAGPipeline()
-    
+
     email = "test_cli@example.com"
     password = "password123"
-    
+
     print("\n2. Đăng ký/Đăng nhập User (Test PostgreSQL Auth)...")
     try:
         user_id = store.register_user(email, password)
@@ -28,13 +29,13 @@ def main():
         else:
             print("  -> Đăng nhập thất bại!")
             return
-            
+
     print("\n3. Nạp dữ liệu vào Vector Store (PostgreSQL pgvector)...")
     upload_dir = Path("data/raw")
     if not upload_dir.exists():
         print(f"  -> Thư mục {upload_dir} không tồn tại!")
         return
-        
+
     try:
         count = rag.load_documents(str(upload_dir))
         print(f"  -> Đã nạp thành công {count} chunks vào vector database.")
@@ -43,15 +44,15 @@ def main():
         import traceback
         traceback.print_exc()
         return
-    
+
     print("\n4. Test truy vấn dữ liệu (Retrieve data)...")
     queries = [
         "Thời gian và cách thức ra đời của CNTB",
         "Thời gian và cách thức ra đời của Chủ nghĩa Tư bản"
     ]
-    
+
     for query_text in queries:
-        print(f"\n=====================================")
+        print("\n=====================================")
         print(f"  -> Câu hỏi: {query_text}")
         try:
             result = rag.query(query_text)

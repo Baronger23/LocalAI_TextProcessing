@@ -195,7 +195,7 @@ def main() -> None:
     conn.close()
 
     # ── Bước 5: Gọi LLM qua RAGPipeline ─────────────────────────────────────
-    print(f"\n🤖 Bước 5: Gọi LLM (có thể mất 15-60 giây)...")
+    print("\n🤖 Bước 5: Gọi LLM (có thể mất 15-60 giây)...")
     try:
         from src.rag import RAGPipeline
         # Tắt connection pool để tránh treo — dùng direct connection
@@ -244,16 +244,16 @@ def main() -> None:
     if found_artifacts:
         print(f"  ❌ Bug 1 (JSON artifact): {found_artifacts}")
     else:
-        print(f"  ✅ Bug 1 (JSON artifact): Không có")
+        print("  ✅ Bug 1 (JSON artifact): Không có")
 
     lines = [l.strip() for l in answer.split("\n") if l.strip()]
     bc_pat = re.compile(r'^[\w\s]+\s*[>:]\s*[\w\s]+')
     is_breadcrumb = (len(lines) <= 3 and len(answer) < 200
                      and all(bc_pat.match(l) for l in lines[:3]))
     if is_breadcrumb:
-        print(f"  ❌ Bug 1 (breadcrumb only): Answer chỉ là chỉ mục")
+        print("  ❌ Bug 1 (breadcrumb only): Answer chỉ là chỉ mục")
     else:
-        print(f"  ✅ Bug 1 (breadcrumb only): Answer có nội dung thực")
+        print("  ✅ Bug 1 (breadcrumb only): Answer có nội dung thực")
 
     # ── Kết luận ─────────────────────────────────────────────────────────────
     print(f"\n{SEP}")
@@ -262,7 +262,7 @@ def main() -> None:
 
     ok = topics_found >= MIN_TOPICS_REQUIRED and not found_artifacts and not is_breadcrumb
     if ok:
-        print(f"✅ KẾT LUẬN: ĐẠT")
+        print("✅ KẾT LUẬN: ĐẠT")
     else:
         issues = []
         if topics_found < MIN_TOPICS_REQUIRED:

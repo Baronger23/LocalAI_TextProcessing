@@ -3,6 +3,7 @@ Configuration module for RAG system.
 """
 import os
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -26,12 +27,12 @@ VECTOR_DIMENSION = int(os.getenv("VECTOR_DIMENSION", "768"))
 
 
 def _normalize_postgres_connection_string(connection_string: str) -> str:
-	normalized = connection_string.strip()
-	if normalized.startswith("postgresql+psycopg://"):
-		return "postgresql://" + normalized.split("postgresql+psycopg://", 1)[1]
-	if normalized.startswith("postgresql+asyncpg://"):
-		return "postgresql://" + normalized.split("postgresql+asyncpg://", 1)[1]
-	return normalized
+    normalized = connection_string.strip()
+    if normalized.startswith("postgresql+psycopg://"):
+        return "postgresql://" + normalized.split("postgresql+psycopg://", 1)[1]
+    if normalized.startswith("postgresql+asyncpg://"):
+        return "postgresql://" + normalized.split("postgresql+asyncpg://", 1)[1]
+    return normalized
 
 # ChromaDB settings
 CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", str(VECTOR_DB_DIR / "chroma_db"))
@@ -46,9 +47,9 @@ POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
 POSTGRES_SCHEMA = os.getenv("POSTGRES_SCHEMA", "public")
 POSTGRES_CONNECTION_STRING = os.getenv(
-	"POSTGRES_CONNECTION_STRING",
-	"postgresql://"
-	f"{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}",
+    "POSTGRES_CONNECTION_STRING",
+    "postgresql://"
+    f"{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}",
 )
 POSTGRES_CONNECTION_STRING = _normalize_postgres_connection_string(POSTGRES_CONNECTION_STRING)
 POSTGRES_VECTOR_TABLE = os.getenv("POSTGRES_VECTOR_TABLE", "document_chunks")

@@ -4,13 +4,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.chunking import AdaptiveChunkingPipeline
 from langchain_core.documents import Document
+
+from src.chunking import AdaptiveChunkingPipeline
 
 
 def test_adaptive_chunking_large_doc():
     """Test adaptive chunking with a large Vietnamese document."""
-    
+
     # Large sample text
     text = """
 NỘI QUY LAO ĐỘNG CÔNG TY ABC - Version 2024
@@ -119,16 +120,16 @@ Nội quy này áp dụng cho tất cả nhân viên của công ty ABC.
 Ngày được phê duyệt: 01/01/2024
 Ký bởi: Ban lãnh đạo công ty ABC
 """ * 20  # Replicate to make it bigger
-    
+
     pipeline = AdaptiveChunkingPipeline(strategy="adaptive")
-    
+
     # Test 1: chunk_text directly
     print("TEST 1: chunk_text (raw text)")
     chunks_direct = pipeline.chunk_text(text, doc_title="Nội quy ABC")
     print(f"  Direct chunks: {len(chunks_direct)}")
     for i, chunk in enumerate(chunks_direct[:3]):
         print(f"    Chunk {i+1}: {len(chunk.page_content)} chars, breadcrumb: {chunk.metadata.get('breadcrumb', 'N/A')}")
-    
+
     # Test 2: chunk_documents with Document wrapper
     print("\nTEST 2: chunk_documents (Document wrapper)")
     docs = [Document(page_content=text, metadata={"source": "test.txt", "file_path": "test.txt"})]

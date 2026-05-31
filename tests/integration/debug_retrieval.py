@@ -34,8 +34,8 @@ def main():
 
     # ── Kết nối DB trực tiếp ────────────────────────────────────────────────
     import psycopg
-    from psycopg.rows import dict_row
     from pgvector.psycopg import register_vector
+    from psycopg.rows import dict_row
 
     conn = psycopg.connect(
         "postgresql://postgres:postgres@localhost:5430/secure_docs_ai",
@@ -72,7 +72,7 @@ def main():
                 print(f"     {sample['content'][:120].replace(chr(10),' ')}...")
 
     # ── Embed query ──────────────────────────────────────────────────────────
-    print(f"\n🔢 Embed query...")
+    print("\n🔢 Embed query...")
     from src.embeddings import EmbeddingManager
     em = EmbeddingManager()
     t0 = time.perf_counter()
@@ -80,7 +80,7 @@ def main():
     print(f"   ✅ Done ({(time.perf_counter()-t0)*1000:.0f}ms)")
 
     # ── Hybrid search — xem top 8 chunks được retrieve ──────────────────────
-    print(f"\n🔍 Top 8 chunks được retrieve (hybrid search):")
+    print("\n🔍 Top 8 chunks được retrieve (hybrid search):")
     from pgvector import Vector
     k = 8
     rows = conn.execute(
@@ -153,7 +153,7 @@ def main():
         print("      → Cần tăng k hoặc dùng query cụ thể hơn")
 
         # Thử với k=15
-        print(f"\n🔍 Thử lại với k=15:")
+        print("\n🔍 Thử lại với k=15:")
         rows15 = conn.execute(
             """
             WITH sem AS (

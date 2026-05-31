@@ -15,17 +15,17 @@ import threading
 import time
 from typing import Any, Dict, Generator, List, Optional
 
-from langchain_ollama import OllamaLLM
-from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import PromptTemplate
+from langchain_ollama import OllamaLLM
 
 from src.config import (
-    OLLAMA_BASE_URL,
-    LLM_MODEL,
-    LLM_TEMPERATURE,
-    OLLAMA_KEEP_ALIVE,
     LLM_MAX_CONCURRENT_CALLS,
     LLM_MAX_QUEUE_SIZE,
+    LLM_MODEL,
+    LLM_TEMPERATURE,
+    OLLAMA_BASE_URL,
+    OLLAMA_KEEP_ALIVE,
 )
 from src.rag.exceptions import LLMQueueFullError, LLMTimeoutError
 from src.rag.models import FusedLLMResponse

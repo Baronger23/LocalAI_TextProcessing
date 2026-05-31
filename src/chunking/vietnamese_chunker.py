@@ -8,8 +8,8 @@ Supports hierarchical structures:
 """
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
 from enum import IntEnum
+from typing import List, Optional, Tuple
 
 
 class SectionLevel(IntEnum):

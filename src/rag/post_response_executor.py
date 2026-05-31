@@ -8,7 +8,8 @@ threads without blocking the next user query.
 from __future__ import annotations
 
 import logging
-from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)

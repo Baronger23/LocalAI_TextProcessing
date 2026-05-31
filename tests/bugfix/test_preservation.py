@@ -29,18 +29,15 @@ Property 2e — Semaphore blocking preservation:
 """
 from __future__ import annotations
 
-import gc
 from typing import List
 from unittest.mock import MagicMock, patch
 
-import pytest
 from langchain_core.documents import Document
 
 from src.llm.llm_manager import LLMManager
 from src.rag.exceptions import LLMQueueFullError, LLMTimeoutError
 from src.rag.models import FusedLLMResponse
 from src.rag.rag_pipeline import RAGPipeline
-
 
 # ---------------------------------------------------------------------------
 # Helpers

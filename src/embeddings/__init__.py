@@ -1,4 +1,4 @@
 """
 Embeddings package.
 """
-from .embedding_manager import EmbeddingManager
+from .embedding_manager import EmbeddingManager as EmbeddingManager

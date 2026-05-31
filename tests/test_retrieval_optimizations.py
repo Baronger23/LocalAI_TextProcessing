@@ -12,14 +12,13 @@ Test strategy:
 from __future__ import annotations
 
 from typing import List
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from langchain_core.documents import Document
 
 from src.rag.rag_pipeline import RAGPipeline
 from src.rag.vector_store import VectorStoreManager
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -244,6 +243,9 @@ class TestMMRRerank:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.ollama
 class TestRetrievalOptimizationsIntegration:
     """
     Integration tests: real PostgreSQL, real Ollama embeddings, mocked LLM.

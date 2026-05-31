@@ -27,17 +27,13 @@ DO NOT fix the code when these tests fail.  The failures are the proof that the 
 from __future__ import annotations
 
 import gc
-import threading
-from typing import Iterator
 from unittest.mock import MagicMock, patch
 
-import pytest
 from langchain_core.documents import Document
 
 from src.llm.llm_manager import LLMManager
 from src.rag.models import FusedLLMResponse
 from src.rag.rag_pipeline import RAGPipeline
-
 
 # ---------------------------------------------------------------------------
 # Bug 1 — Fused Response Cleanup

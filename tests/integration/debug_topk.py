@@ -6,14 +6,17 @@ Chạy:
     venv\\Scripts\\python.exe tests/integration/debug_topk.py
 """
 from __future__ import annotations
-import sys, time
+
+import sys
+import time
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import psycopg
-from psycopg.rows import dict_row
-from pgvector.psycopg import register_vector
 from pgvector import Vector
+from pgvector.psycopg import register_vector
+from psycopg.rows import dict_row
 
 QUERY = "Các công trình lý luận về vai trò trong quan hệ quốc tế"
 SEP = "=" * 70

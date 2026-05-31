@@ -100,12 +100,16 @@ class TestKeywordSupplement:
         assert rag.vector_store_manager.keyword_search.call_count >= 1
         assert "keyword.pdf" in result["context"]
 
-    def test_focused_query_skips_keyword_supplement(self):
-        rag = _mock_pipeline([_doc("ASEAN thành lập năm 1967.", "fact.pdf", 1)])
+    def test_focused_query_uses_keyword_supplement(self):
+        vector_docs = [_doc("Nội dung nền về ASEAN.", "vector.pdf", 1)]
+        keyword_docs = [_doc("ASEAN thành lập năm 1967.", "fact.pdf", 1)]
+        rag = _mock_pipeline(vector_docs)
+        rag.vector_store_manager.keyword_search.return_value = keyword_docs
 
-        rag.query("ASEAN thành lập năm nào?")
+        result = rag.query("ASEAN thành lập năm nào?")
 
-        rag.vector_store_manager.keyword_search.assert_not_called()
+        rag.vector_store_manager.keyword_search.assert_called()
+        assert "fact.pdf" in result["context"]
 
     def test_keyword_supplement_does_not_add_domain_canned_queries(self):
         queries = RAGPipeline._build_keyword_supplement_queries(
@@ -114,6 +118,16 @@ class TestKeywordSupplement:
 
         assert "công trình liên quan vai trò chủ thể quan hệ quốc tế" not in queries
         assert "vai trò chủ thể quan hệ quốc tế chịu ảnh hưởng" not in queries
+
+    def test_sentence_initial_verb_is_not_entity_boosted(self):
+        assert RAGPipeline._extract_proper_nouns(
+            "Xuất dữ liệu cá nhân khỏi hệ thống phân tích cần ai phê duyệt?"
+        ) == []
+
+    def test_sentence_initial_name_still_entity_boosted(self):
+        assert RAGPipeline._extract_proper_nouns(
+            "Amitav Acharya phân tích ASEAN như thế nào?"
+        ) == ["Amitav", "Acharya", "ASEAN"]
 
 
 class TestBroadQueryDecomposition:

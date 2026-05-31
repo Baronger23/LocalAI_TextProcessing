@@ -13,6 +13,8 @@ import pytest
 from src.config import POSTGRES_CONNECTION_STRING
 from src.storage.chat_store import ChatStore
 
+pytestmark = [pytest.mark.integration, pytest.mark.postgres]
+
 
 @pytest.fixture
 def store():

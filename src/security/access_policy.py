@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import unicodedata
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, List
 
 ACCESS_DENIED_MESSAGE = "Bạn không có quyền truy cập nội dung này."
 NO_AUTHORIZED_CONTEXT_MESSAGE = (

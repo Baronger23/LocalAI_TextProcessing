@@ -19,10 +19,6 @@ from __future__ import annotations
 import hashlib
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
-from typing import List
-from unittest.mock import MagicMock, patch
 
 import pytest
 from langchain_core.documents import Document
@@ -30,12 +26,12 @@ from langchain_core.documents import Document
 from src.embeddings import EmbeddingManager
 from src.rag.vector_store import VectorStoreManager
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 TEST_TABLE = "test_perf_chunks"
+pytestmark = [pytest.mark.integration, pytest.mark.postgres, pytest.mark.ollama]
 
 
 def _make_doc(content: str, source: str = "test.pdf", **extra_meta) -> Document:
@@ -107,11 +103,11 @@ class TestFileHashDedup:
         ]
 
         # First upload
-        ids_1 = vsm.add_documents(docs)
+        vsm.add_documents(docs)
         count_after_first = _count_chunks(vsm)
 
         # Second upload — same content
-        ids_2 = vsm.add_documents(docs)
+        vsm.add_documents(docs)
         count_after_second = _count_chunks(vsm)
 
         # Should not create new rows
@@ -295,8 +291,8 @@ class TestPartialFailure:
         processor = DocumentProcessor()
 
         # Create real test files: 9 valid .txt files + 1 invalid
-        import tempfile
         import os
+        import tempfile
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create 9 valid text files
@@ -359,9 +355,10 @@ class TestParallelParsing:
     """Multiple files parsed concurrently → all succeed."""
 
     def test_parallel_load_directory(self):
-        from src.document_loader import DocumentProcessor
-        import tempfile
         import os
+        import tempfile
+
+        from src.document_loader import DocumentProcessor
 
         processor = DocumentProcessor()
 

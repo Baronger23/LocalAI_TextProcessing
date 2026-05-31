@@ -1,4 +1,4 @@
 """
 Configuration package.
 """
-from .settings import *
+from .settings import *  # noqa: F403

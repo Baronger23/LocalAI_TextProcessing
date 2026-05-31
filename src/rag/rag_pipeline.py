@@ -23,6 +23,7 @@ from langchain_core.documents import Document
 from src.config import (
     ASYNC_POST_PROCESSING_ENABLED,
     BROAD_QUERY_TOP_K,
+    CACHE_TTL_SECONDS,
     DEFAULT_TOP_K,
     KEYWORD_SUPPLEMENT_ENABLED,
     KEYWORD_SUPPLEMENT_TOP_K,
@@ -32,17 +33,14 @@ from src.config import (
     MMR_LAMBDA,
     PROMPT_FUSION_ENABLED,
     QUERY_CACHE_ENABLED,
-    CACHE_TTL_SECONDS,
     QUERY_REWRITE_ENABLED,
     STREAMING_ENABLED,
-    LLM_MODEL,
 )
 from src.document_loader import DocumentProcessor
 from src.embeddings import EmbeddingManager
 from src.llm import LLMManager
 from src.rag.benchmark import PerformanceBenchmark
 from src.rag.exceptions import LLMQueueFullError, LLMTimeoutError
-from src.rag.models import FusedLLMResponse, TimingBreakdown
 from src.rag.post_response_executor import PostResponseTaskExecutor
 from src.rag.query_cache import QueryCache
 from src.rag.vector_store import VectorStoreManager
@@ -780,7 +778,7 @@ Câu hỏi độc lập (viết lại rõ ràng, thay thế từ chỉ định):
         # We intentionally exclude words like "Dong", "Hoa", "Van", "Quoc"
         # which could be part of company names, project codes, or person names
         # in non-academic documents (e.g., company policies, project files).
-        _VN_STOP_CAPS = {
+        vn_stop_caps = {
             # Vietnamese function words (with diacritics)
             "Các", "Những", "Theo", "Với", "Của", "Trong", "Về", "Và",
             "Hay", "Tại", "Khi", "Như", "Đây", "Này", "Đó", "Nào",
@@ -789,8 +787,8 @@ Câu hỏi độc lập (viết lại rõ ràng, thay thế từ chỉ định):
             # Common Vietnamese sentence-starting words that should not trigger entity boost
             "Hạn", "Mức", "Thời", "Ngày", "Tháng", "Năm", "Người", "Nhân", "Việc",
             "Quy", "Chính", "Bản", "Bảng", "Đơn", "Hóa", "Tiền", "Danh", "Mục", "Sách",
-            "Công", "Cấp", "Ty", "Phòng", "Ban", "Khối", "Hồ", "Sơ", "Chuyến", "Bay", 
-            "Hạng", "Vé", "Phụ", "Ăn", "Uống", "Khách", "Sạn", "Chi", "Phí", "Hoàn", 
+            "Công", "Cấp", "Ty", "Phòng", "Ban", "Khối", "Hồ", "Sơ", "Chuyến", "Bay",
+            "Hạng", "Vé", "Phụ", "Ăn", "Uống", "Khách", "Sạn", "Chi", "Phí", "Hoàn",
             "Ứng", "Yêu", "Cầu", "Tài", "Liệu", "Quyết", "Toán", "Thanh",
             # Common query pronouns and sentence starters
             "Tôi", "Hãy", "Anh", "Chị", "Bạn", "Thế", "Nếu", "Làm", "Nãy", "Đó",
@@ -801,19 +799,24 @@ Câu hỏi độc lập (viết lại rõ ràng, thay thế từ chỉ định):
             "Cho", "Den", "Sao", "Vao", "Len",
             "Han", "Muc", "Thoi", "Ngay", "Thang", "Nam", "Nguoi", "Nhan", "Viec",
             "Quy", "Chinh", "Ban", "Bang", "Don", "Hoa", "Tien", "Danh", "Muc", "Sach",
-            "Cong", "Cap", "Ty", "Phong", "Ban", "Khoi", "Ho", "So", "Chuyen", "Bay", 
-            "Hang", "Ve", "Phu", "An", "Uong", "Khach", "San", "Chi", "Phi", "Hoan", 
+            "Cong", "Cap", "Ty", "Phong", "Ban", "Khoi", "Ho", "So", "Chuyen", "Bay",
+            "Hang", "Ve", "Phu", "An", "Uong", "Khach", "San", "Chi", "Phi", "Hoan",
             "Ung", "Yeu", "Cau", "Tai", "Lieu", "Quyet", "Toan", "Thanh",
             "Toi", "Hay", "Anh", "Chi", "Ban", "The", "Neu", "Lam", "Nay"
         }
         tokens = re.findall(r"[\wÀ-ỹ]+", question)
         seen: set[str] = set()
         result: List[str] = []
-        for token in tokens:
+        for index, token in enumerate(tokens):
             if token and token[0].isupper():
-                if token not in _VN_STOP_CAPS and token not in seen and len(token) >= 3:
-                    seen.add(token)
-                    result.append(token)
+                if token in vn_stop_caps or token in seen or len(token) < 3:
+                    continue
+                if index == 0 and not token.isupper():
+                    next_token = tokens[1] if len(tokens) > 1 else ""
+                    if not (next_token and next_token[0].isupper()):
+                        continue
+                seen.add(token)
+                result.append(token)
         return result
 
     def _entity_boost_search(
@@ -840,9 +843,9 @@ Câu hỏi độc lập (viết lại rõ ràng, thay thế từ chỉ định):
         proper_nouns = self._extract_proper_nouns(question)
         # Only run entity boost when there are specific named entities beyond
         # common acronyms that appear in every document.
-        _COMMON_ACRONYMS = {
+        common_acronyms = {
             "ASEAN", "ARF", "EAS", "ADMM", "APEC", "CPTPP", "RCEP",
-            "HCM", "VND", "HRBP", "KPI", "DPIA", "VPN", "CEO", "BOD", 
+            "HCM", "VND", "HRBP", "KPI", "DPIA", "VPN", "CEO", "BOD",
             "HN", "TP", "USD", "PDF", "RAG", "FTS", "RRF", "MMR", "LLM",
             "MANAGER", "EMPLOYEE", "ADMIN", "DIRECTOR", "OFFICER", "STAFF",
             "DIGITAL", "COMPANY", "TNHH", "AN", "PHÁT",
@@ -850,7 +853,7 @@ Câu hỏi độc lập (viết lại rõ ràng, thay thế từ chỉ định):
             "DOMESTIC", "MEAL", "FLIGHT", "CLASS", "CLAIM", "DEADLINE",
             "TRAVEL", "EXPENSE", "POLICY", "TRAVEL_EXPENSE_POLICY"
         }
-        specific_nouns = [n for n in proper_nouns if n.upper() not in _COMMON_ACRONYMS]
+        specific_nouns = [n for n in proper_nouns if n.upper() not in common_acronyms]
         if not specific_nouns:
             return []
 
@@ -921,8 +924,8 @@ Câu hỏi độc lập (viết lại rõ ràng, thay thế từ chỉ định):
         mode: str,
         access_filter: Optional[Dict[str, Any]] = None,
     ) -> List[Document]:
-        """Run keyword-only retrieval for broad queries when supported."""
-        if not self.keyword_supplement_enabled or mode != "broad":
+        """Run keyword-only retrieval to catch exact terms, anchors, and headings."""
+        if not self.keyword_supplement_enabled:
             return []
         keyword_search = getattr(self.vector_store_manager, "keyword_search", None)
         if keyword_search is None:
@@ -950,7 +953,7 @@ Câu hỏi độc lập (viết lại rõ ràng, thay thế từ chỉ định):
             value = str(metadata.get(key) or "").strip()
             if value:
                 parts.append(value)
-        
+
         # Add translated terms to boost relevance of English metadata keys
         text = " ".join(parts).lower()
         translations = {
@@ -975,7 +978,7 @@ Câu hỏi độc lập (viết lại rõ ràng, thay thế từ chỉ định):
         for eng, vie in translations.items():
             if eng in text:
                 parts.append(vie)
-                
+
         return " ".join(parts)
 
     @classmethod
@@ -1258,7 +1261,7 @@ Câu hỏi độc lập (viết lại rõ ràng, thay thế từ chỉ định):
             merged_docs = self._merge_documents(relevant_docs, entity_docs, keyword_docs)
 
         authorized_docs = self._filter_authorized_documents(merged_docs, access_filter)
-        
+
         reranked_docs = self._rerank_retrieved_documents(
             retrieval_question,
             authorized_docs,
@@ -1292,7 +1295,7 @@ Câu hỏi độc lập (viết lại rõ ràng, thay thế từ chỉ định):
         answer: str
     ) -> None:
         debug_info = getattr(self, "_last_retrieval_debug", {})
-        
+
         # Safe encoding print for Windows console
         def safe_print(msg: str):
             try:
@@ -1306,7 +1309,7 @@ Câu hỏi độc lập (viết lại rõ ràng, thay thế từ chỉ định):
         safe_print("="*80)
         safe_print(f"🔹 Question:\n{question}\n")
         safe_print(f"🔹 Contextual query:\n{retrieval_question or '(None)'}\n")
-        
+
         safe_print(f"🔹 Top vector chunks ({len(debug_info.get('top_vector', []))}):")
         for i, d in enumerate(debug_info.get("top_vector", [])[:5]):
             source = d.metadata.get("file_name") or d.metadata.get("source") or "?"
@@ -1314,7 +1317,7 @@ Câu hỏi độc lập (viết lại rõ ràng, thay thế từ chỉ định):
             sim = d.metadata.get('similarity') or d.metadata.get('vector_score') or 0.0
             safe_print(f"  [{i+1}] {source} (Section: {sec}) -> score={sim:.4f}")
             safe_print(f"      Text: {d.page_content[:150].strip()}...")
-            
+
         safe_print(f"\n🔹 Top keyword chunks ({len(debug_info.get('top_keyword', []))}):")
         for i, d in enumerate(debug_info.get("top_keyword", [])[:5]):
             source = d.metadata.get("file_name") or d.metadata.get("source") or "?"
@@ -1322,24 +1325,24 @@ Câu hỏi độc lập (viết lại rõ ràng, thay thế từ chỉ định):
             k_score = d.metadata.get('keyword_score', 0.0)
             safe_print(f"  [{i+1}] {source} (Section: {sec}) -> keyword_score={k_score:.4f}")
             safe_print(f"      Text: {d.page_content[:150].strip()}...")
-            
+
         safe_print(f"\n🔹 Sau RRF ({len(debug_info.get('after_rrf', []))}):")
         for i, d in enumerate(debug_info.get("after_rrf", [])[:5]):
             source = d.metadata.get("file_name") or d.metadata.get("source") or "?"
             sec = d.metadata.get("section_title") or "?"
             sim = d.metadata.get('similarity') or d.metadata.get('vector_score') or 0.0
             safe_print(f"  [{i+1}] {source} (Section: {sec}) -> rrf_score={sim:.4f}")
-            
+
         safe_print(f"\n🔹 Sau rerank ({len(debug_info.get('after_rerank', []))}):")
         for i, d in enumerate(debug_info.get("after_rerank", [])[:5]):
             source = d.metadata.get("file_name") or d.metadata.get("source") or "?"
             sec = d.metadata.get("section_title") or "?"
             sim = d.metadata.get('similarity') or d.metadata.get('vector_score') or 0.0
             safe_print(f"  [{i+1}] {source} (Section: {sec}) -> rerank_score={sim:.4f}")
-            
+
         safe_print(f"\n🔹 Final packed context ({len(context)} chars):")
         safe_print(f"{context[:400].strip()}...\n[TRUNCATED]\n")
-        
+
         safe_print(f"🔹 Answer:\n{answer}")
         safe_print("="*80 + "\n")
 
@@ -1416,7 +1419,7 @@ Câu hỏi độc lập (viết lại rõ ràng, thay thế từ chỉ định):
         # Step 2 — Embed query
         # ----------------------------------------------------------
         with self.benchmark.measure("embedding") as t_embed:
-            query_embedding_text = question  # used only for cache key; actual embed inside VSM
+            pass
 
         timings["embedding_ms"] = t_embed.elapsed_ms
 

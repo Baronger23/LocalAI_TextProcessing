@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
+import unicodedata
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -14,24 +16,66 @@ from langchain_core.documents import Document
 from src.config import (
     CHROMA_COLLECTION_NAME,
     CHROMA_PERSIST_DIR,
-    EMBEDDING_BATCH_SIZE,
     EMBEDDING_MODEL,
+    MMR_ENABLED,
+    MMR_FETCH_K,
     POSTGRES_CONNECTION_STRING,
-    POSTGRES_POOL_MIN_SIZE,
     POSTGRES_POOL_MAX_SIZE,
+    POSTGRES_POOL_MIN_SIZE,
     POSTGRES_SCHEMA,
     POSTGRES_VECTOR_TABLE,
     SEARCH_RESULT_BUFFER,
     VECTOR_DIMENSION,
     VECTOR_STORE_BACKEND,
-    MMR_FETCH_K,
-    MMR_ENABLED,
 )
 from src.embeddings import EmbeddingManager
 from src.rag.exceptions import PoolTimeoutError
-from src.security.access_policy import compact_filter_for_chroma
+from src.security.access_policy import compact_filter_for_chroma, document_allowed
 
 logger = logging.getLogger(__name__)
+
+_KEYWORD_STOPWORDS = {
+    "a",
+    "an",
+    "anh",
+    "bao",
+    "bi",
+    "cac",
+    "can",
+    "cho",
+    "co",
+    "cua",
+    "da",
+    "de",
+    "den",
+    "do",
+    "duoc",
+    "hay",
+    "hoi",
+    "khi",
+    "khong",
+    "la",
+    "lam",
+    "mot",
+    "nao",
+    "nay",
+    "neu",
+    "nhieu",
+    "nhung",
+    "of",
+    "phai",
+    "quy",
+    "sau",
+    "the",
+    "thi",
+    "to",
+    "toi",
+    "trong",
+    "tu",
+    "va",
+    "ve",
+    "voi",
+}
 
 
 def _sanitize_json(value: Any) -> Any:
@@ -64,6 +108,66 @@ def _execute_sql_script(conn: Any, script_text: str) -> None:
         cleaned_statement = statement.strip()
         if cleaned_statement:
             conn.execute(cleaned_statement)
+
+
+def _fold_keyword_text(text: str) -> str:
+    lowered = (text or "").lower().replace("đ", "d")
+    folded = "".join(
+        ch
+        for ch in unicodedata.normalize("NFD", lowered)
+        if unicodedata.category(ch) != "Mn"
+    )
+    return " ".join(folded.split())
+
+
+def _keyword_tokens(text: str) -> List[str]:
+    folded = _fold_keyword_text(text)
+    raw_tokens = re.findall(r"[a-z0-9]+", folded)
+    tokens = [
+        token
+        for token in raw_tokens
+        if len(token) >= 2 and token not in _KEYWORD_STOPWORDS
+    ]
+    return tokens or [token for token in raw_tokens if len(token) >= 2]
+
+
+def _keyword_text(metadata: Dict[str, Any], content: str) -> str:
+    metadata_parts = [
+        str(metadata.get(key) or "")
+        for key in (
+            "title",
+            "file_name",
+            "source_document",
+            "section_title",
+            "outline_path",
+            "breadcrumb",
+            "policy_code",
+            "anchor",
+            "retrieval_group",
+        )
+    ]
+    return " ".join([content or "", *metadata_parts])
+
+
+def _chunk_index(metadata: Dict[str, Any]) -> int | None:
+    try:
+        return int(metadata.get("chunk_index"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _metadata_source(metadata: Dict[str, Any]) -> str:
+    return str(
+        metadata.get("file_name")
+        or metadata.get("source")
+        or metadata.get("source_document")
+        or ""
+    )
+
+
+def _looks_like_heading_context(content: str) -> bool:
+    text = content or ""
+    return '<a id="' in text or bool(re.search(r"(?m)^\s{0,3}#{1,4}\s+", text))
 
 
 class VectorStoreManager:
@@ -212,6 +316,31 @@ class VectorStoreManager:
         except Exception:
             # Pool init failed — fall back to direct connection
             return self._get_postgres_connection()
+
+    def close(self) -> None:
+        """Close the lazy PostgreSQL connection pool if it was opened."""
+        pool = self._pool
+        self._pool = None
+        if pool is None:
+            return
+        try:
+            pool.close(timeout=2.0)
+        except TypeError:
+            pool.close()
+        except Exception:
+            logger.debug("[pool] Failed to close PostgreSQL connection pool", exc_info=True)
+
+    def __enter__(self) -> "VectorStoreManager":
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def _init_postgres_schema(self) -> None:
         if self._postgres_ready:
@@ -389,10 +518,10 @@ class VectorStoreManager:
         """
         self._init_postgres_schema()
 
-        _, Vector, _, _ = self._import_postgres_dependencies()
+        _, vector_type, _, _ = self._import_postgres_dependencies()
         ids: List[str] = []
         grouped: Dict[str, List[tuple[int, Document, Dict[str, Any]]]] = {}
-        
+
         print(f"\n[INGESTION_DEBUG] Starting _postgres_add_documents with {len(documents)} documents")
 
         for index, document in enumerate(documents):
@@ -406,17 +535,11 @@ class VectorStoreManager:
             for source_key, items in grouped.items():
                 source_document = items[0][2]
 
-                # --- FIX: Check if document already exists and is already processed ---
-                existing_doc = conn.execute(
-                    f"SELECT id, embedding_status FROM {self.postgres_schema}.documents WHERE source_key = %s",
-                    (source_key,),
-                ).fetchone()
-                
                 # FIX: Don't skip based on document existence alone. Instead, let chunk-level deduplication
                 # handle detection of duplicate content. This allows re-upload of partially-processed files.
                 # For example: if a document had a failed insert with only 2 chunks, re-uploading will now
                 # properly insert the remaining chunks instead of skipping entirely.
-                
+
                 # --- Step 1: Upsert document row ---
                 document_row = conn.execute(
                     f"""
@@ -493,7 +616,7 @@ class VectorStoreManager:
                 # Debug: show small content previews to verify chunking differences
                 previews = [c["content"].replace("\n", " ")[:120] for c in chunk_data[:5]]
                 logger.info("  Sample chunk previews: %s", previews)
-                
+
                 logger.info("[INGESTION_DEBUG] Source: %s", source_key)
                 logger.info("  Total chunks parsed: %d", len(chunk_data))
                 logger.info("  Existing chunks for THIS document in DB: %d", len(existing_hashes))
@@ -559,14 +682,14 @@ class VectorStoreManager:
                             chunk["chunk_index"],
                             chunk["content"],
                             chunk["content_hash"],
-                            Vector(vector),
+                            vector_type(vector),
                             embedding_model,
                             chunk["page_number"],
                             json.dumps(chunk["metadata"]),
                         ),
                     )
                     inserted_count += 1
-                
+
                 logger.info("  Chunks inserted: %d", inserted_count)
 
                 # Mark document as done
@@ -589,14 +712,14 @@ class VectorStoreManager:
         raw_tokens = [t.strip() for t in cleaned.split() if t.strip()]
 
         stop_words = {
-            "neu", "toi", "thi", "ai", "se", "bang", "cho", "cua", "da", "duoc", 
-            "co", "khong", "la", "va", "hoac", "nhung", "vi", "nen", "voi", "tai", 
-            "trong", "o", "nay", "do", "kia", "ay", "nao", "gi", "su", 
-            "cac", "nhung", "mot", "hai", "bon", "tam", "chin", "muoi", "tren", 
-            "duoi", "khi", "luc", "noi", "cho", "nguoi", "hay", "den", "de", 
+            "neu", "toi", "thi", "ai", "se", "bang", "cho", "cua", "da", "duoc",
+            "co", "khong", "la", "va", "hoac", "nhung", "vi", "nen", "voi", "tai",
+            "trong", "o", "nay", "do", "kia", "ay", "nao", "gi", "su",
+            "cac", "nhung", "mot", "hai", "bon", "tam", "chin", "muoi", "tren",
+            "duoi", "khi", "luc", "noi", "cho", "nguoi", "hay", "den", "de",
             "theo", "nhu", "xem", "the",
-            "a", "an", "in", "on", "at", "for", "of", "with", "to", "and", 
-            "or", "if", "then", "who", "will", "be", "is", "are", "was", "were", 
+            "a", "an", "in", "on", "at", "for", "of", "with", "to", "and",
+            "or", "if", "then", "who", "will", "be", "is", "are", "was", "were",
             "you", "i", "he", "she", "they", "we", "it", "my", "your", "his", "her",
             "him", "them", "us", "our", "their", "this", "that", "these", "those",
             "thoi", "gian", "cach", "thuc", "ra", "doi", "ty",
@@ -670,8 +793,8 @@ class VectorStoreManager:
         # If keyword_query is not provided, use the semantic query
         fts_query = keyword_query if keyword_query else query
 
-        _, Vector, _, _ = self._import_postgres_dependencies()
-        query_vector = Vector(self.embedding_manager.embed_query(query))
+        _, vector_type, _, _ = self._import_postgres_dependencies()
+        query_vector = vector_type(self.embedding_manager.embed_query(query))
 
         where_clause_semantic, semantic_filter_params = self._build_access_sql_filter(
             filter,
@@ -862,8 +985,70 @@ class VectorStoreManager:
         with self._pool_connection() as conn:
             rows = conn.execute(sql, params).fetchall()
 
-        documents: List[Document] = []
-        for row in rows:
+            requested_neighbors: Dict[tuple[str, int], float] = {}
+            for row in rows:
+                try:
+                    previous_index = int(row["chunk_index"]) - 1
+                except (TypeError, ValueError):
+                    continue
+                if previous_index < 0:
+                    continue
+                key = (str(row["document_id"]), previous_index)
+                requested_neighbors.setdefault(
+                    key,
+                    max(0.0, float(row.get("keyword_score") or 0.0) - 0.1),
+                )
+
+            neighbor_rows = []
+            if requested_neighbors:
+                neighbor_where_clause, neighbor_filter_params = self._build_access_sql_filter(
+                    filter,
+                    chunk_alias="prev",
+                    document_alias="d",
+                )
+                values_sql = ", ".join(
+                    ["(%s::uuid, %s::integer)"] * len(requested_neighbors)
+                )
+                neighbor_sql = f"""
+                WITH wanted(document_id, chunk_index) AS (
+                    VALUES {values_sql}
+                )
+                SELECT
+                    prev.id as chunk_id,
+                    prev.content,
+                    prev.metadata,
+                    prev.page_number,
+                    prev.chunk_index,
+                    prev.document_id,
+                    d.source_key,
+                    d.file_name,
+                    d.file_path,
+                    d.metadata AS document_metadata
+                FROM {self.postgres_schema}.{self.postgres_table_name} prev
+                JOIN wanted w
+                    ON prev.document_id = w.document_id
+                    AND prev.chunk_index = w.chunk_index
+                JOIN {self.postgres_schema}.documents d ON d.id = prev.document_id
+                WHERE 1=1 {neighbor_where_clause}
+                ORDER BY prev.document_id, prev.chunk_index
+                """
+                neighbor_params: List[Any] = []
+                for document_id, chunk_index in requested_neighbors:
+                    neighbor_params.extend([document_id, chunk_index])
+                neighbor_params.extend(neighbor_filter_params)
+                neighbor_rows = conn.execute(neighbor_sql, neighbor_params).fetchall()
+
+        neighbor_by_key = {
+            (str(row["document_id"]), int(row["chunk_index"])): row
+            for row in neighbor_rows
+            if _looks_like_heading_context(row["content"] or "")
+        }
+
+        def row_to_document(
+            row: Dict[str, Any],
+            keyword_score: float,
+            retrieval_method: str,
+        ) -> Document:
             metadata = _sanitize_json(row["metadata"] or {})
             document_metadata = _sanitize_json(row["document_metadata"] or {})
             merged_metadata = {
@@ -876,17 +1061,182 @@ class VectorStoreManager:
                 "document_id": str(row["document_id"]),
                 "chunk_index": row["chunk_index"],
                 "page_number": row["page_number"],
-                "keyword_score": float(row.get("keyword_score") or 0.0),
-                "retrieval_method": "keyword",
+                "keyword_score": keyword_score,
+                "retrieval_method": retrieval_method,
             }
+            return Document(page_content=row["content"], metadata=merged_metadata)
+
+        documents: List[Document] = []
+        seen_ids: set[str] = set()
+        for row in rows:
+            chunk_id = str(row["chunk_id"])
+            keyword_score = float(row.get("keyword_score") or 0.0)
+            if chunk_id not in seen_ids:
+                seen_ids.add(chunk_id)
+                documents.append(row_to_document(row, keyword_score, "keyword"))
+
+            try:
+                previous_key = (str(row["document_id"]), int(row["chunk_index"]) - 1)
+            except (TypeError, ValueError):
+                continue
+            neighbor = neighbor_by_key.get(previous_key)
+            if not neighbor:
+                continue
+            neighbor_id = str(neighbor["chunk_id"])
+            if neighbor_id in seen_ids:
+                continue
+            seen_ids.add(neighbor_id)
             documents.append(
-                Document(
-                    page_content=row["content"],
-                    metadata=merged_metadata,
+                row_to_document(
+                    neighbor,
+                    requested_neighbors.get(previous_key, max(0.0, keyword_score - 0.1)),
+                    "postgres_keyword_neighbor",
                 )
             )
 
-        return documents
+        return documents[:k]
+
+    @staticmethod
+    def _score_keyword_candidate(query: str, metadata: Dict[str, Any], content: str) -> float:
+        query_tokens = _keyword_tokens(query)
+        if not query_tokens:
+            return 0.0
+
+        searchable_text = _keyword_text(metadata, content)
+        folded_text = _fold_keyword_text(searchable_text)
+        folded_metadata = _fold_keyword_text(_keyword_text(metadata, ""))
+        content_tokens = set(_keyword_tokens(searchable_text))
+        metadata_tokens = set(_keyword_tokens(folded_metadata))
+        query_token_set = set(query_tokens)
+
+        matched_tokens = query_token_set & content_tokens
+        if not matched_tokens:
+            return 0.0
+
+        score = float(len(matched_tokens) * 3)
+        score += float(sum(query_tokens.count(token) for token in matched_tokens))
+        score += float(len(query_token_set & metadata_tokens) * 2)
+
+        folded_query = _fold_keyword_text(query)
+        if len(folded_query) >= 8 and folded_query in folded_text:
+            score += 20.0
+
+        for size, weight in ((3, 5.0), (2, 2.0)):
+            if len(query_tokens) < size:
+                continue
+            for index in range(len(query_tokens) - size + 1):
+                phrase = " ".join(query_tokens[index:index + size])
+                if phrase in folded_text:
+                    score += weight
+
+        query_numbers = {token for token in query_token_set if token.isdigit()}
+        if query_numbers:
+            score += float(len(query_numbers & content_tokens) * 4)
+
+        chunk_type = str(metadata.get("chunk_type") or "").lower()
+        if chunk_type == "outline":
+            score += 2.0
+
+        return score
+
+    def _chroma_keyword_search(
+        self,
+        query: str,
+        k: int = 8,
+        filter: Optional[Dict[str, Any]] = None,
+    ) -> List[Document]:
+        """Local lexical search over Chroma documents.
+
+        Chroma has vector retrieval but no built-in FTS in this stack. This
+        lightweight scan gives focused policy questions exact-token candidates
+        so repeated boilerplate does not dominate vector-only retrieval.
+        """
+        if k < 1:
+            raise ValueError(f"k must be >= 1, got {k}")
+
+        collection = self.vector_store._collection
+        chroma_filter = compact_filter_for_chroma(filter)
+        get_kwargs: Dict[str, Any] = {"include": ["documents", "metadatas"]}
+        if chroma_filter:
+            get_kwargs["where"] = chroma_filter
+        raw_results = collection.get(**get_kwargs)
+
+        ids = raw_results.get("ids") or []
+        contents = raw_results.get("documents") or []
+        metadatas = raw_results.get("metadatas") or []
+
+        neighbor_lookup: Dict[tuple[str, int], tuple[str, Dict[str, Any], str | None]] = {}
+        for index, content in enumerate(contents):
+            metadata = _sanitize_json(metadatas[index] if index < len(metadatas) else {})
+            chunk_index = _chunk_index(dict(metadata or {}))
+            source = _metadata_source(dict(metadata or {}))
+            if source and chunk_index is not None:
+                doc_id = ids[index] if index < len(ids) else None
+                neighbor_lookup[(source, chunk_index)] = (content or "", dict(metadata or {}), doc_id)
+
+        ranked: List[Tuple[float, int, Document]] = []
+        for index, content in enumerate(contents):
+            metadata = _sanitize_json(metadatas[index] if index < len(metadatas) else {})
+            if not document_allowed(dict(metadata or {}), filter):
+                continue
+            score = self._score_keyword_candidate(query, dict(metadata or {}), content or "")
+            if score <= 0:
+                continue
+            enriched_metadata = dict(metadata or {})
+            if index < len(ids):
+                enriched_metadata.setdefault("chunk_id", ids[index])
+            enriched_metadata["keyword_score"] = score
+            enriched_metadata["retrieval_method"] = "chroma_keyword"
+            ranked.append(
+                (
+                    score,
+                    index,
+                    Document(page_content=content or "", metadata=enriched_metadata),
+                )
+            )
+
+        ranked.sort(key=lambda item: (-item[0], item[1]))
+        expanded: List[Tuple[float, float, Document]] = []
+        seen_ids: set[str] = set()
+        for score, index, doc in ranked:
+            doc_id = str(doc.metadata.get("chunk_id") or f"ranked:{index}")
+            if doc_id not in seen_ids:
+                seen_ids.add(doc_id)
+                expanded.append((score, index, doc))
+
+            metadata = dict(doc.metadata or {})
+            source = _metadata_source(metadata)
+            current_index = _chunk_index(metadata)
+            if not source or current_index is None:
+                continue
+
+            neighbor = neighbor_lookup.get((source, current_index - 1))
+            if not neighbor:
+                continue
+            neighbor_content, neighbor_metadata, neighbor_id = neighbor
+            if not _looks_like_heading_context(neighbor_content):
+                continue
+            if not document_allowed(dict(neighbor_metadata or {}), filter):
+                continue
+
+            neighbor_key = str(neighbor_id or f"{source}:{current_index - 1}")
+            if neighbor_key in seen_ids:
+                continue
+            seen_ids.add(neighbor_key)
+            enriched_metadata = dict(neighbor_metadata or {})
+            if neighbor_id:
+                enriched_metadata.setdefault("chunk_id", neighbor_id)
+            enriched_metadata["keyword_score"] = max(0.0, score - 0.1)
+            enriched_metadata["retrieval_method"] = "chroma_keyword_neighbor"
+            expanded.append(
+                (
+                    max(0.0, score - 0.1),
+                    index + 0.1,
+                    Document(page_content=neighbor_content, metadata=enriched_metadata),
+                )
+            )
+
+        return [doc for _score, _index, doc in expanded[:k]]
 
     def _postgres_delete_collection(self) -> None:
         self._init_postgres_schema()
@@ -1127,7 +1477,7 @@ class VectorStoreManager:
         """Search by lexical keyword ranking when the backend supports it."""
         if self.backend == "postgres":
             return self._postgres_keyword_search(query=query, k=k, filter=filter)
-        return []
+        return self._chroma_keyword_search(query=query, k=k, filter=filter)
 
     def delete_collection(self):
         """Delete the entire collection."""
@@ -1190,7 +1540,6 @@ class VectorStoreManager:
             data = collection.get(include=['metadatas', 'documents'])
             metadatas = data.get('metadatas') or []
             ids = data.get('ids') or []
-            docs_text = data.get('documents') or []
             result: List[Dict[str, Any]] = []
             for idx, doc_id in enumerate(ids):
                 meta = metadatas[idx] if idx < len(metadatas) else {}

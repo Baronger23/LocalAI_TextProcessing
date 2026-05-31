@@ -1,20 +1,23 @@
-"""
-Tests for the RAG pipeline.
-"""
+"""Tests for the RAG pipeline."""
+
 import pytest
-from src.rag import RAGPipeline
-from src.llm import LLMManager
+
+from src.config import EMBEDDING_MODEL, LLM_MODEL
 from src.embeddings import EmbeddingManager
+from src.llm import LLMManager
+from src.rag import RAGPipeline
 
 
 class TestLLMManager:
     """Test LLM Manager functionality."""
-    
+
     def test_llm_initialization(self):
         """Test LLM manager can be initialized."""
         llm = LLMManager()
-        assert llm.model == "qwen2.5:7b"
-    
+        assert llm.model == LLM_MODEL
+
+    @pytest.mark.integration
+    @pytest.mark.ollama
     def test_llm_invoke(self):
         """Test LLM can generate response."""
         llm = LLMManager()
@@ -25,12 +28,14 @@ class TestLLMManager:
 
 class TestEmbeddingManager:
     """Test Embedding Manager functionality."""
-    
+
     def test_embedding_initialization(self):
         """Test embedding manager can be initialized."""
         embed = EmbeddingManager()
-        assert embed.model == "nomic-embed-text:v1.5"
-    
+        assert embed.model == EMBEDDING_MODEL
+
+    @pytest.mark.integration
+    @pytest.mark.ollama
     def test_embed_query(self):
         """Test embedding generation."""
         embed = EmbeddingManager()
@@ -41,14 +46,14 @@ class TestEmbeddingManager:
 
 class TestRAGPipeline:
     """Test RAG Pipeline functionality."""
-    
+
     def test_pipeline_initialization(self):
         """Test RAG pipeline can be initialized."""
         rag = RAGPipeline()
         assert rag.llm_manager is not None
         assert rag.embedding_manager is not None
         assert rag.vector_store_manager is not None
-    
+
     def test_get_stats(self):
         """Test getting pipeline stats."""
         rag = RAGPipeline()

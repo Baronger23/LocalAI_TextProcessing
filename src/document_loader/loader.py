@@ -5,7 +5,7 @@ Supports parallel file parsing via ThreadPoolExecutor.
 """
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from langchain_community.document_loaders import (
     PyPDFLoader,
@@ -15,8 +15,8 @@ from langchain_community.document_loaders import (
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from src.config import CHUNK_SIZE, CHUNK_OVERLAP, CHUNK_STRATEGY, PARSE_WORKERS
 from src.chunking import AdaptiveChunkingPipeline
+from src.config import CHUNK_OVERLAP, CHUNK_SIZE, CHUNK_STRATEGY, PARSE_WORKERS
 
 
 class DocumentProcessor:
@@ -228,12 +228,12 @@ class DocumentProcessor:
                 raise ValueError(f"Unsupported file type: {file_path.suffix}")
 
         print(f"[INGESTION_DEBUG] Loaded {len(documents)} raw documents from {source}")
-        
+
         # Choose chunking strategy
         if self.strategy == "adaptive":
             chunks = self.split_documents_adaptive(documents)
         else:
             chunks = self.split_documents(documents)
-        
+
         print(f"[INGESTION_DEBUG] After chunking: {len(chunks)} chunks")
         return chunks

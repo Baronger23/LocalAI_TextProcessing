@@ -16,7 +16,13 @@ try:
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.styles import getSampleStyleSheet
     from reportlab.lib.units import cm
-    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.platypus import (
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
 except Exception:  # pragma: no cover - optional dependency
     colors = None
     A4 = landscape = getSampleStyleSheet = cm = None  # type: ignore[assignment]

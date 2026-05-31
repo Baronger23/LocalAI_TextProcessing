@@ -1,10 +1,14 @@
 import pytest
 from langchain_core.documents import Document
+
 from src.rag.vector_store import VectorStoreManager
+
+pytestmark = [pytest.mark.integration, pytest.mark.postgres, pytest.mark.ollama]
+
 
 class TestHybridSearch:
     """Test Hybrid Search combining pgvector and Full-Text Search."""
-    
+
     @pytest.fixture(autouse=True)
     def setup_and_teardown(self):
         """Setup test vector store and teardown after test."""
@@ -13,12 +17,12 @@ class TestHybridSearch:
             backend="postgres",
             postgres_table_name="test_hybrid_chunks"
         )
-        
+
         # Ensure clean state
         self.vsm.delete_collection()
-        
+
         yield
-        
+
         # Teardown
         self.vsm.delete_collection()
 
@@ -45,25 +49,25 @@ Chúng ta có thể thấy rằng việc nhồi nhét quá nhiều thông tin v�
 Hãy hy vọng rằng Hybrid Search với Full-Text Search có thể cứu rỗi chúng ta khỏi vấn đề này.
 """, metadata={"source": "doc3"}),
         ]
-        
+
         # Add to postgres
         self.vsm.add_documents(docs)
-        
+
         # Search query matching the acronym
         query = "Thời gian và cách thức ra đời của XYZ_UNLIKELY_ACRONYM"
-        
+
         # In a pure vector search, XYZ_UNLIKELY_ACRONYM is out-of-vocabulary,
         # so the model might rank doc1 and doc2 higher because of "Thời gian".
         # But in a Hybrid Search, FTS will find an EXACT match for XYZ_UNLIKELY_ACRONYM in doc3.
         # Thus doc3 should be the #1 result.
-        
+
         results = self.vsm.similarity_search_with_score(query, k=3)
-        
+
         assert len(results) > 0, "Should return results"
-        
+
         # The top result MUST be doc3 if Hybrid Search is working correctly
         top_doc, score = results[0]
-        
+
         assert top_doc.metadata.get("source") == "doc3", (
             f"Hybrid search failed! Expected doc3 to be top result due to exact keyword match, "
             f"but got {top_doc.metadata.get('source')} instead."

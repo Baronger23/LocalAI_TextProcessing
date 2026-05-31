@@ -1,7 +1,9 @@
 """Debug test for ingestion pipeline - chunk counting and database storage."""
-import tempfile
 import sys
+import tempfile
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -12,7 +14,7 @@ from src.rag.vector_store import VectorStoreManager
 
 def test_document_processing_chunking():
     """Test: Document processing should split into many chunks, not just 2."""
-    
+
     # Create a sample Vietnamese legal document (9MB equivalent - simulate with long text)
     long_text = """
 NỘI QUY LAO ĐỘNG CÔNG TY ABC - Version 2024
@@ -240,31 +242,33 @@ Ký bởi: Ban lãnh đạo công ty ABC
 """.strip() * 5  # Replicate 5 times to simulate large document
 
     processor = DocumentProcessor()
-    
+
     # Test chunking
     with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix='.txt', delete=False) as f:
         f.write(long_text)
         temp_file = f.name
-    
+
     try:
         documents = processor.process_documents(source=temp_file, is_directory=False)
-        
-        print(f"\n📊 CHUNK COUNT TEST")
+
+        print("\n📊 CHUNK COUNT TEST")
         print(f"Total document chunks: {len(documents)}")
         print(f"Chunk sizes: {[len(d.page_content) for d in documents[:5]]}...")
-        
+
         # Assertion
         assert len(documents) > 2, f"❌ Expected > 2 chunks, got {len(documents)}"
         print(f"✅ PASS: Got {len(documents)} chunks (expected > 2)")
-        
-        return documents
+
     finally:
         Path(temp_file).unlink()
 
 
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.ollama
 def test_postgres_insertion_deduplication():
     """Test: PostgreSQL insertion should preserve all chunks, not deduplicate them."""
-    
+
     # Create test documents
     test_chunks = [
         "Điều 1: Quy định chung. Nội quy này áp dụng cho tất cả nhân viên.",
@@ -273,9 +277,9 @@ def test_postgres_insertion_deduplication():
         "Điều 4: Thời gian. Thời gian làm việc là 8:00-17:00.",
         "Điều 5: Lương. Lương được trả hàng tháng.",
     ]
-    
+
     from langchain_core.documents import Document
-    
+
     documents = [
         Document(
             page_content=content,
@@ -287,33 +291,32 @@ def test_postgres_insertion_deduplication():
         )
         for content in test_chunks
     ]
-    
+
     embedding_manager = EmbeddingManager()
     vector_store = VectorStoreManager(
         embedding_manager=embedding_manager,
         backend="postgres"
     )
-    
+
     try:
         # Add documents
-        print(f"\n📊 DATABASE INSERTION TEST")
+        print("\n📊 DATABASE INSERTION TEST")
         print(f"Adding {len(documents)} chunks to PostgreSQL...")
-        
+
         ids = vector_store.add_documents(documents)
-        
+
         print(f"Inserted IDs: {ids}")
-        print(f"✅ Documents inserted")
-        
+        print("✅ Documents inserted")
+
         # Query back
         with vector_store._get_postgres_connection() as conn:
-            conn_temp = conn
             result = conn.execute(
                 f"SELECT COUNT(*) as cnt FROM {vector_store.postgres_schema}.{vector_store.postgres_table_name}"
             ).fetchone()
-            
+
             chunk_count = result["cnt"] if result else 0
             print(f"Chunks in database: {chunk_count}")
-            
+
             # Show chunk content_hash info
             rows = conn.execute(
                 f"""
@@ -321,8 +324,8 @@ def test_postgres_insertion_deduplication():
                 LIMIT 10
                 """
             ).fetchall()
-            
-            print(f"\nChunk samples (content_hash, content_length):")
+
+            print("\nChunk samples (content_hash, content_length):")
             for row in rows:
                 content_len = len(row.get("content", ""))
                 print(f"  {row.get('content_hash', 'N/A')[:16]}... : {content_len} chars")
@@ -347,7 +350,7 @@ def test_postgres_insertion_deduplication():
 
 if __name__ == "__main__":
     print("🔍 DEBUGGING INGESTION PIPELINE\n")
-    
+
     try:
         docs = test_document_processing_chunking()
         print(f"\n✅ Chunking test passed: {len(docs)} chunks created")
@@ -355,9 +358,9 @@ if __name__ == "__main__":
         print(f"\n❌ Chunking test FAILED: {e}")
     except Exception as e:
         print(f"\n❌ Chunking test ERROR: {e}")
-    
+
     try:
         test_postgres_insertion_deduplication()
-        print(f"\n✅ Database insertion test completed")
+        print("\n✅ Database insertion test completed")
     except Exception as e:
         print(f"\n❌ Database insertion ERROR: {e}")

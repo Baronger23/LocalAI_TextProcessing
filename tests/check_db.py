@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path('.')))
 from src.rag.vector_store import VectorStoreManager
 
@@ -13,7 +14,7 @@ try:
             LEFT JOIN public.document_chunks c ON d.id = c.document_id 
             GROUP BY d.file_name
         """).fetchall()
-        
+
         if not rows:
             print("Database is EMPTY.")
         else:

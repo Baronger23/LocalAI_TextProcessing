@@ -24,18 +24,18 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from src.embeddings.embedding_manager import EmbeddingManager
+from src.llm.llm_manager import LLMManager
+from src.rag.benchmark import PerformanceBenchmark
+from src.rag.exceptions import LLMQueueFullError, LLMTimeoutError
+
 # ---------------------------------------------------------------------------
 # Source imports
 # ---------------------------------------------------------------------------
 from src.rag.models import FusedLLMResponse
 from src.rag.query_cache import QueryCache
-from src.rag.benchmark import PerformanceBenchmark
-from src.rag.exceptions import LLMTimeoutError, LLMQueueFullError
-from src.llm.llm_manager import LLMManager
-from src.embeddings.embedding_manager import EmbeddingManager
-from src.rag.vector_store import VectorStoreManager
 from src.rag.rag_pipeline import RAGPipeline
-
+from src.rag.vector_store import VectorStoreManager
 
 # ===========================================================================
 # GROUP 1 — Prompt Fusion (FusedLLMResponse)

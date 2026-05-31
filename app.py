@@ -1,15 +1,15 @@
 """
 Streamlit Chat Interface - Premium Corporate RAG UI Redesign
 """
-import logging
-import streamlit as st
-import pandas as pd
-from pathlib import Path
-import sys
-import time
-import json
 import datetime
+import json
+import logging
+import sys
 from datetime import timezone
+from pathlib import Path
+
+import pandas as pd
+import streamlit as st
 
 # Configure root logger so pipeline debug messages appear in the terminal.
 logging.basicConfig(
@@ -22,7 +22,6 @@ logger = logging.getLogger(__name__)
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.rag import RAGPipeline
 from src.admin_analytics import (
     build_activity_snapshot,
     build_donut_html,
@@ -34,6 +33,7 @@ from src.admin_analytics import (
     normalize_period,
 )
 from src.admin_rbac import render_rbac_admin_page
+from src.rag import RAGPipeline
 from src.security import (
     ACCESS_DENIED_MESSAGE,
     build_access_filter,
@@ -595,11 +595,11 @@ def render_sources(sources: list[dict]) -> None:
         source_name = _source_file_name(metadata)
         page = metadata.get("page_number") or metadata.get("page_start") or metadata.get("page") or "N/A"
         section = metadata.get("section_title") or "Quy định"
-        
+
         # Tooltip for preview content
         preview = str(source.get("content", "")).strip()[:180].replace('"', '&quot;').replace('\n', ' ')
         tooltip_text = f"{section} | {preview}..."
-        
+
         cards_html.append(f"""
         <div class="citation-card" title="{tooltip_text}">
             <span class="citation-file-icon">📄</span>
@@ -732,7 +732,7 @@ def generate_doc_summary(rag: RAGPipeline, doc_name: str, full_text: str) -> dic
     {full_text[:4500]}
 
     Trả ra duy nhất một đối tượng JSON hợp lệ (bằng tiếng Việt):"""
-    
+
     try:
         res = rag.llm_manager.invoke(prompt).strip()
         res_cleaned = res.replace("```json", "").replace("```", "").strip()
@@ -742,7 +742,7 @@ def generate_doc_summary(rag: RAGPipeline, doc_name: str, full_text: str) -> dic
             return json.loads(res_cleaned[start:end+1])
     except Exception as e:
         logger.warning("Summary generation failed: %s", e)
-        
+
     # Fallback default values
     return {
         "efficiency": "Quy chuẩn hóa định mức chi phí và cải tiến hiệu quả vận hành nội bộ.",
@@ -817,16 +817,16 @@ def main():
                 <p style="color: #64748b; font-size: 15px;">Hệ thống quản lý tri thức & Trợ lý quy chế thông minh</p>
             </div>
             """, unsafe_allow_html=True)
-            
+
             auth_mode = st.radio(
                 "Tài khoản",
                 ["Đăng nhập", "Đăng ký"],
                 horizontal=True,
                 label_visibility="collapsed"
             )
-            
+
             st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
-            
+
             if auth_mode == "Đăng nhập":
                 login_email = st.text_input("Email", placeholder="yourname@anphat.com")
                 login_password = st.text_input("Mật khẩu", type="password", placeholder="••••••••")
@@ -920,9 +920,9 @@ def main():
             st.session_state.rolling_summary = ""
             st.session_state.navigation = "Chat"
             st.rerun()
-            
+
         st.markdown("<div style='margin-bottom: 16px;'></div>", unsafe_allow_html=True)
-        
+
         # Navigation vertical tabs (simulated via custom styled radio)
         nav_options = {
             "💬 Trợ lý hỏi đáp": "Chat",
@@ -935,11 +935,11 @@ def main():
             nav_options["📈 Báo cáo AI"] = "AI Report"
         if st.session_state.auth_user_role == "Admin":
             nav_options["🛡️ Nhật ký hệ thống"] = "Audit Log"
-        
+
         current_index = 0
         if st.session_state.navigation in nav_options.values():
             current_index = list(nav_options.values()).index(st.session_state.navigation)
-            
+
         selected_nav_label = st.radio(
             "Điều hướng",
             options=list(nav_options.keys()),
@@ -963,7 +963,7 @@ def main():
         # Chat History List (Tenant-Isolated)
         st.markdown('<p class="sidebar-header">Lịch sử hội thoại</p>', unsafe_allow_html=True)
         conversations = store.list_conversations(st.session_state.auth_user_id, limit=8)
-        
+
         if not conversations:
             st.caption("Chưa có hội thoại nào")
         else:
@@ -1006,20 +1006,20 @@ def main():
                     dept_options = sorted({"general", st.session_state.auth_department})
                 doc_dept = st.selectbox("Phòng ban", dept_options, index=0)
                 doc_sens = st.selectbox("Độ nhạy cảm", ["public", "internal", "confidential", "restricted"], index=1)
-                
+
                 role_opts = ["Admin", "Manager", "Employee"]
                 default_allowed = ["Admin", "Manager"]
                 if doc_sens in {"public", "internal"}:
                     default_allowed.append("Employee")
                 doc_roles = st.multiselect("Nhóm quyền", role_opts, default=default_allowed)
-                
+
                 uploaded_files = st.file_uploader(
                     "Chọn files",
                     type=["pdf", "txt", "docx"],
                     accept_multiple_files=True,
                     label_visibility="collapsed"
                 )
-                
+
                 if uploaded_files and st.button("Bắt đầu tải lên", use_container_width=True, type="primary"):
                     with st.spinner("Đang trích xuất và lưu trữ..."):
                         upload_dir = Path("data/raw")
@@ -1027,12 +1027,12 @@ def main():
                         if not doc_roles:
                             st.error("Phải chọn tối thiểu 1 vai trò được phép truy cập.")
                             st.stop()
-                            
+
                         for file in uploaded_files:
                             file_path = upload_dir / file.name
                             with open(file_path, "wb") as f:
                                 f.write(file.getbuffer())
-                                
+
                         meta = {
                             "department": doc_dept,
                             "sensitivity": doc_sens,
@@ -1040,12 +1040,12 @@ def main():
                             "metadata_verified": True,
                             "uploaded_by": st.session_state.auth_user_id,
                         }
-                        
+
                         count = 0
                         for file in uploaded_files:
                             file_path = upload_dir / file.name
                             count += rag.load_documents(str(file_path), is_directory=False, metadata=meta)
-                        
+
                         rag.clear_cache()
                         store.log_audit(
                             st.session_state.auth_user_id,
@@ -1073,7 +1073,7 @@ def main():
             </div>
         </div>
         """, unsafe_allow_html=True)
-        
+
         if st.button("Đăng xuất", use_container_width=True):
             store.log_audit(st.session_state.auth_user_id, "logout", "User logout")
             st.session_state.auth_user_id = None
@@ -1116,7 +1116,7 @@ def main():
                 ("🍽️ Định mức phụ cấp ăn", "Quy định về phụ cấp ăn uống hàng ngày khi đi công tác nội địa là bao nhiêu?", "travel_expense_policy.pdf"),
                 ("⏰ Thời hạn nộp hồ sơ", "Sau chuyến công tác, thời hạn tối đa để tôi nộp hồ sơ hoàn ứng claim chi phí là bao nhiêu ngày làm việc?", "travel_expense_policy.pdf"),
             ]
-            
+
             with col_p1:
                 for icon, title, desc in [prompts[0], prompts[2]]:
                     if st.button(f"{icon}\n\n{title}", key=f"quick_{title}", use_container_width=True):
@@ -1182,17 +1182,17 @@ def main():
         # Handle active response generation
         if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
             user_msg = st.session_state.messages[-1]["content"]
-            
+
             with st.chat_message("assistant", avatar="🤖"):
                 message_placeholder = st.empty()
-                
+
                 # Check ACL permissions
                 question_allowed = check_question_permission(
                     st.session_state.auth_user_role,
                     st.session_state.auth_department,
                     classify_question_category(user_msg),
                 )
-                
+
                 if not question_allowed:
                     response = ACCESS_DENIED_MESSAGE
                     message_placeholder.markdown(response)
@@ -1212,17 +1212,17 @@ def main():
                         summary=st.session_state.rolling_summary,
                         user_memories=st.session_state.user_memories,
                     )
-                    
+
                     access_filter = build_access_filter(
                         st.session_state.auth_user_role,
                         st.session_state.auth_department,
                     )
-                    
+
                     displayed_text = ""
                     sources = []
                     stream_result = {}
                     message_placeholder.markdown("🔍 đang tra cứu tài liệu và lập bối cảnh...")
-                    
+
                     # Stream response directly from Ollama
                     for token in rag.query_stream(
                         user_msg,
@@ -1234,14 +1234,14 @@ def main():
                     ):
                         displayed_text += token
                         message_placeholder.markdown(displayed_text + "▌")
-                    
+
                     message_placeholder.markdown(displayed_text)
                     response = displayed_text
                     sources = stream_result.get("sources", [])
-                    
+
                     if sources:
                         render_sources(sources)
-                        
+
                     # Save assistant response
                     st.session_state.messages.append({
                         "role": "assistant",
@@ -1262,7 +1262,7 @@ def main():
                         content=response,
                         sources=sources if sources else None,
                     )
-                    
+
                     # Log audit trail
                     store.log_audit(
                         st.session_state.auth_user_id,
@@ -1320,7 +1320,7 @@ def main():
                         _update_summary()
                         _extract_memories()
                         st.session_state.user_memories = store.list_user_memories(_user_id, limit=12)
-                        
+
                     st.rerun()
 
                 except Exception as e:
@@ -1355,7 +1355,7 @@ def main():
                 <h4 style="font-size: 14px; font-weight: 700; color: #1e293b; margin-top: 0; margin-bottom: 15px; letter-spacing: 0.5px;">BỘ LỌC TÌM KIẾM</h4>
             </div>
             """, unsafe_allow_html=True)
-            
+
             # Department checkboxes
             st.markdown("<p style='font-size: 12px; font-weight: 600; color: #64748b;'>PHÒNG BAN</p>", unsafe_allow_html=True)
             depts = ["general", "finance", "hr", "it", "legal", "security"]
@@ -1441,7 +1441,7 @@ def main():
             else:
                 cols_per_row = 3
                 rows = [filtered_docs[i:i + cols_per_row] for i in range(0, len(filtered_docs), cols_per_row)]
-                
+
                 for row_idx, row_docs in enumerate(rows):
                     cols = st.columns(cols_per_row)
                     for col_idx, doc in enumerate(row_docs):
@@ -1451,7 +1451,7 @@ def main():
                             dept = meta.get("department", "general").upper()
                             emb_status = doc.get("embedding_status", "DONE").upper()
                             created_str = doc["created_at"].strftime("%b %d, %Y")
-                            
+
                             badge_cls = "badge-done"
                             if emb_status == "PROCESSING":
                                 badge_cls = "badge-pending"
@@ -1512,7 +1512,7 @@ def main():
 
         doc_id = doc["id"]
         doc_name = doc["file_name"]
-        
+
         # Load document text chunks
         chunks = rag.vector_store_manager.get_document_chunks(doc_id)
         full_text = "\n\n".join([c["content"] for c in chunks])
@@ -1541,13 +1541,13 @@ def main():
 
         with col_summary:
             st.markdown("<p style='font-size: 12px; font-weight: 600; color: #64748b;'>TÓM TẮT CHỈ SỐ (EXECUTIVE SUMMARY)</p>", unsafe_allow_html=True)
-            
+
             # Cache the summary in session state to prevent repeatedly invoking LLM
             summary_state_key = f"doc_summary_{doc_id}"
             if summary_state_key not in st.session_state:
                 with st.spinner("Đang phân tích và sinh tóm tắt chỉ số..."):
                     st.session_state[summary_state_key] = generate_doc_summary(rag, doc_name, full_text)
-            
+
             summary_data = st.session_state[summary_state_key]
 
             # Render Metric cards
@@ -1577,7 +1577,7 @@ def main():
             st.markdown("##### 💬 Hỏi đáp nhanh về tài liệu này")
             st.caption("Các câu hỏi dưới đây chỉ tìm kiếm thông tin và giải đáp trên duy nhất tài liệu này.")
             doc_query = st.text_input("Đặt câu hỏi cho tài liệu này...", key=f"query_doc_{doc_id}", placeholder="Hỏi về hạn mức, quy trình...")
-            
+
             if doc_query:
                 with st.spinner("Đang tìm kiếm..."):
                     # Build metadata filter restricting search solely to this document
@@ -1586,14 +1586,14 @@ def main():
                         st.session_state.auth_department,
                     )
                     access_filter["document_id"] = doc_id
-                    
+
                     # Run RAG query
                     result = rag.query(
                         question=doc_query,
                         k=3,
                         access_filter=access_filter
                     )
-                    
+
                     # Display response in clean card
                     st.markdown(f"""
                     <div style="background-color: #e0f2fe; border-left: 4px solid #0284c7; padding: 16px; border-radius: 8px; font-size: 13px; line-height: 1.6; color: #0369a1; margin-top: 10px;">
@@ -2051,7 +2051,7 @@ def main():
         # 2. Filters card section
         st.markdown("##### 🔍 Bộ lọc tìm kiếm")
         col_f1, col_f2, col_f3 = st.columns(3)
-        
+
         with col_f1:
             filter_categories = {
                 "Tất cả sự kiện": None,
@@ -2083,7 +2083,7 @@ def main():
         # 3. Setup Pagination State
         if "audit_page" not in st.session_state:
             st.session_state.audit_page = 0
-        
+
         filter_key = f"{selected_cat_label}_{email_filter}_{start_date_str}_{end_date_str}"
         if "last_audit_filter" not in st.session_state or st.session_state.last_audit_filter != filter_key:
             st.session_state.audit_page = 0
@@ -2160,10 +2160,10 @@ def main():
                 event = log["event"]
                 user_email = log["user_email"] or "Hệ thống / Ẩn danh"
                 created_at = log["created_at"].strftime("%H:%M:%S • %d/%m/%Y")
-                
+
                 details_str = json.dumps(log["details"])
                 details_preview = details_str[:85] + "..." if len(details_str) > 85 else details_str
-                
+
                 badge_class = "badge-neutral"
                 if event in ["login", "register", "logout"]:
                     badge_class = "badge-success"
@@ -2173,7 +2173,7 @@ def main():
                     badge_class = "badge-danger"
                 elif event in ["question_allowed"]:
                     badge_class = "badge-info"
-                    
+
                 rows_html.append(
                     f'<tr>'
                     f'<td><span class="audit-badge {badge_class}">{event}</span></td>'
@@ -2182,7 +2182,7 @@ def main():
                     f'<td style="font-family: monospace; font-size: 12px; color: #475569;">{details_preview}</td>'
                     f'</tr>'
                 )
-                
+
             table_html = (
                 '<table class="audit-table">'
                 '<thead>'
@@ -2203,7 +2203,7 @@ def main():
             # 6. Pagination UI
             col_nav1, col_nav2, col_nav3 = st.columns([1, 2, 1])
             total_pages = max(1, (total_filtered + limit_per_page - 1) // limit_per_page)
-            
+
             with col_nav1:
                 if st.button("◀ Trang trước", disabled=st.session_state.audit_page == 0, use_container_width=True):
                     st.session_state.audit_page -= 1
@@ -2239,9 +2239,9 @@ def main():
                     start_date=start_date_str,
                     end_date=end_date_str
                 )
-                
-                import io
+
                 import csv
+                import io
                 csv_buffer = io.StringIO()
                 writer = csv.writer(csv_buffer)
                 writer.writerow(["ID", "Sự kiện", "Email", "Quyền", "Thời gian", "Chi tiết Payload"])
@@ -2254,7 +2254,7 @@ def main():
                         log["created_at"].isoformat(),
                         json.dumps(log["details"])
                     ])
-                
+
                 st.download_button(
                     label="Tải báo cáo CSV kiểm toán (Excel Compatible)",
                     data=csv_buffer.getvalue().encode('utf-8-sig'),

@@ -16,12 +16,12 @@ from typing import List, Optional
 from langchain_ollama import OllamaEmbeddings
 
 from src.config import (
-    OLLAMA_BASE_URL,
-    EMBEDDING_MODEL,
     EMBEDDING_BATCH_SIZE,
-    OLLAMA_KEEP_ALIVE,
     EMBEDDING_CACHE_ENABLED,
     EMBEDDING_CACHE_MAX_SIZE,
+    EMBEDDING_MODEL,
+    OLLAMA_BASE_URL,
+    OLLAMA_KEEP_ALIVE,
 )
 
 logger = logging.getLogger(__name__)

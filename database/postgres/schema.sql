@@ -44,27 +44,30 @@ CREATE TABLE IF NOT EXISTS user_permission_groups (
 );
 
 CREATE TABLE IF NOT EXISTS group_department_permissions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     group_id UUID NOT NULL REFERENCES permission_groups(id) ON DELETE CASCADE,
-    department_id UUID NOT NULL REFERENCES departments(id) ON DELETE CASCADE,
+    department TEXT NOT NULL,
     max_sensitivity TEXT NOT NULL DEFAULT 'internal',
     can_view_all_documents BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (group_id, department_id)
+    UNIQUE (group_id, department)
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_permission_groups_user ON user_permission_groups(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_permission_groups_group ON user_permission_groups(group_id);
 CREATE INDEX IF NOT EXISTS idx_group_department_permissions_group ON group_department_permissions(group_id);
-CREATE INDEX IF NOT EXISTS idx_group_department_permissions_department ON group_department_permissions(department_id);
+CREATE INDEX IF NOT EXISTS idx_group_department_permissions_department ON group_department_permissions(department);
 
 CREATE TABLE IF NOT EXISTS documents (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     source_key TEXT NOT NULL UNIQUE,
     file_name TEXT NOT NULL,
     file_path TEXT,
+    file_hash TEXT,
     uploaded_by UUID REFERENCES users(id) ON DELETE SET NULL,
     status TEXT NOT NULL DEFAULT 'active',
+    embedding_status TEXT NOT NULL DEFAULT 'pending',
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -75,20 +78,30 @@ CREATE TABLE IF NOT EXISTS document_chunks (
     document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
     chunk_index INTEGER NOT NULL DEFAULT 0,
     content TEXT NOT NULL,
+    content_hash TEXT,
     embedding vector(768) NOT NULL,
+    embedding_model TEXT,
+    embedding_version TEXT,
+    processing_status TEXT NOT NULL DEFAULT 'done',
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
     page_number INTEGER,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    fts_vector tsvector GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(document_id, chunk_index)
 );
 
 CREATE INDEX IF NOT EXISTS idx_documents_file_path ON documents(file_path);
+CREATE INDEX IF NOT EXISTS idx_documents_file_hash ON documents(file_hash);
 CREATE INDEX IF NOT EXISTS idx_documents_uploaded_by ON documents(uploaded_by);
 CREATE INDEX IF NOT EXISTS idx_document_chunks_document_id ON document_chunks(document_id);
+CREATE INDEX IF NOT EXISTS idx_document_chunks_content_hash ON document_chunks(content_hash);
 CREATE INDEX IF NOT EXISTS idx_document_chunks_page_number ON document_chunks(page_number);
 CREATE INDEX IF NOT EXISTS idx_document_chunks_metadata ON document_chunks USING gin (metadata);
 CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding ON document_chunks USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS idx_document_chunks_fts ON document_chunks USING gin(fts_vector);
 
 CREATE TABLE IF NOT EXISTS chat_sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

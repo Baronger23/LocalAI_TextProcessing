@@ -1,8 +1,8 @@
 """Simulate upload and check logging."""
-import sys
-from pathlib import Path
-import tempfile
 import shutil
+import sys
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -13,13 +13,13 @@ from src.rag import RAGPipeline
 def test_upload_simulation():
     """Simulate uploading a file and trace the pipeline."""
     print("\n[TRACE] SIMULATING FILE UPLOAD\n")
-    
+
     # Create a test directory with a single file
     test_dir = Path(tempfile.mkdtemp(prefix="upload_test_"))
-    
+
     # Create a moderately large TXT file
     txt_file = test_dir / "test_large_doc.txt"
-    
+
     content = """NỘI QUY LAO ĐỘNG CÔNG TY ABC - 2024 Edition
 
 CHƯƠNG I: QUY ĐỊNH CHUNG
@@ -109,26 +109,26 @@ Làm hư hỏng tài sản công ty một cách cố ý hoặc do sơ suất.
 Gây mâu thuẫn nghiêm trọng với đồng nghiệp hoặc quản lý. 
 Hành vi bạo lực hoặc mặc cả tại nơi làm việc.
 """ * 5  # Replicate to make it larger
-    
+
     with open(txt_file, "w", encoding="utf-8") as f:
         f.write(content)
-    
+
     file_size_mb = txt_file.stat().st_size / (1024 * 1024)
     print(f"Created test file: {txt_file.name} ({file_size_mb:.2f} MB)")
-    
+
     with patch("src.rag.vector_store.VectorStoreManager.add_documents") as mock_add:
         mock_add.return_value = []
         try:
             rag = RAGPipeline()
             print(f"\nCalling rag.load_documents('{test_dir}')...\n")
             count = rag.load_documents(str(test_dir))
-            
+
             print(f"\n[RESULT] {count} chunks loaded and inserted")
-            
+
         finally:
             # Clean up
             shutil.rmtree(test_dir)
-            print(f"\nCleaned up test directory")
+            print("\nCleaned up test directory")
 
 
 if __name__ == "__main__":
