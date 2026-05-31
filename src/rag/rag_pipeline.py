@@ -422,9 +422,9 @@ Câu hỏi độc lập (viết lại rõ ràng, thay thế từ chỉ định):
             stripped = line.strip()
             if not stripped:
                 continue
-            if stripped.startswith(("-", "•")):
-                if len(stripped) < 50 and len(stripped.split()) < 8:
-                    candidates.append(stripped)
+            is_bullet = stripped.startswith(("-", "•"))
+            if is_bullet and len(stripped) < 50 and len(stripped.split()) < 8:
+                candidates.append(stripped)
             elif "các công trình" in stripped.lower() or "chịu ảnh hưởng" in stripped.lower():
                 candidates.append(stripped)
             elif re.match(r"^\s*\d+(?:\.\d+)*\.?\s+[A-ZÀ-Ỹ]", stripped):
@@ -1207,7 +1207,7 @@ Câu hỏi độc lập (viết lại rõ ràng, thay thế từ chỉ định):
         original_question: Optional[str] = None,
     ) -> List[Document]:
         """Run hybrid, outline seed, facet, rerank, and auth filtering."""
-        db_k = max(35, top_k + 20)
+        db_k = max(self.mmr_fetch_k if self.mmr_enabled else 35, top_k + 20)
         relevant_docs = self.vector_store_manager.similarity_search(
             query=retrieval_question,
             keyword_query=retrieval_question,

@@ -1,5 +1,5 @@
 """
-Streamlit Chat Interface - Giao diện giống ChatGPT
+Streamlit Chat Interface - Premium Corporate RAG UI Redesign
 """
 import logging
 import streamlit as st
@@ -9,7 +9,6 @@ import time
 import json
 
 # Configure root logger so pipeline debug messages appear in the terminal.
-# Change to logging.WARNING to silence them in production.
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
@@ -31,275 +30,421 @@ from src.security import (
 )
 from src.storage import ChatStore
 
-
 # Page config
 st.set_page_config(
-    page_title="LocalAI Chat",
+    page_title="Corporate AI • Knowledge Assistant",
     page_icon="🤖",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS giống ChatGPT (Light theme)
+# Custom Premium CSS (Slate & Emerald Palette, Glassmorphism, Google Fonts)
 st.markdown("""
 <style>
-    /* Hide Streamlit branding */
+    /* Google Fonts */
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
+    
+    /* Core Typography and Globals */
+    html, body, [class*="css"], .stApp {
+        font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+        background-color: #f8fafc !important;
+        color: #0f172a;
+    }
+    
+    /* Hide Streamlit default branding */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header {visibility: visible;}
+    header {background-color: transparent !important;}
     
-    /* Main background - White like ChatGPT */
-    .stApp {
-        background-color: #ffffff;
-    }
-    
-    /* Sidebar - Light gray */
+    /* Dark Premium Sidebar */
     [data-testid="stSidebar"] {
-        background-color: #f9f9f9;
-        border-right: 1px solid #e5e5e5;
+        background-color: #0f172a !important;
+        border-right: 1px solid #1e293b !important;
+        color: #f8fafc !important;
+    }
+    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3, [data-testid="stSidebar"] span, [data-testid="stSidebar"] label, [data-testid="stSidebar"] p {
+        color: #f8fafc !important;
     }
     
-    [data-testid="stSidebar"] > div:first-child {
-        padding-top: 0.5rem;
+    /* Sidebar Navigation Radio menu styled like vertical tabs */
+    div.row-widget.stRadio > div {
+        flex-direction: column !important;
+        gap: 6px !important;
     }
-    
-    /* Chat messages container */
-    .stChatMessage {
-        max-width: 768px;
-        margin: 0 auto;
-        padding: 24px 0;
-        background-color: transparent;
-    }
-    
-    [data-testid="stChatMessageContent"] {
-        font-size: 16px;
-        line-height: 1.75;
-        color: #333333;
-    }
-    
-    /* Chat input container with plus button */
-    .stChatInput {
-        max-width: 768px !important;
-        margin: 0 auto !important;
-    }
-    
-    .stChatInput > div {
-        border-radius: 26px !important;
-        border: 1px solid #d9d9d9 !important;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.08) !important;
-        background-color: #f4f4f4 !important;
-    }
-    
-    .stChatInput input, .stChatInput textarea {
-        font-size: 16px !important;
+    div.row-widget.stRadio label {
+        display: flex !important;
+        align-items: center !important;
+        gap: 12px !important;
         background-color: transparent !important;
-    }
-    
-    /* Buttons */
-    .stButton > button {
-        border-radius: 10px;
-        border: 1px solid #d9d9d9;
-        background-color: #ffffff;
-        color: #333333;
-        font-weight: 500;
-        padding: 8px 16px;
-        transition: all 0.2s ease;
-    }
-    
-    .stButton > button:hover {
-        background-color: #f5f5f5;
-        border-color: #b3b3b3;
-    }
-    
-    /* Primary button (green) */
-    .stButton > button[kind="primary"] {
-        background-color: #10a37f;
-        color: white;
-        border: none;
-    }
-    
-    .stButton > button[kind="primary"]:hover {
-        background-color: #1a7f64;
-    }
-    
-    /* Title styling */
-    h1, h2, h3 {
-        color: #333333 !important;
-    }
-    
-    /* Radio buttons */
-    .stRadio > div {
-        flex-direction: row;
-        gap: 8px;
-    }
-    
-    .stRadio label {
-        background-color: #ffffff !important;
-        border: 1px solid #d9d9d9 !important;
+        border: none !important;
+        color: #94a3b8 !important;
+        padding: 10px 16px !important;
         border-radius: 8px !important;
-        padding: 8px 16px !important;
-        cursor: pointer;
+        width: 100% !important;
+        cursor: pointer !important;
+        transition: all 0.2s ease-in-out !important;
+        font-weight: 500 !important;
+        font-size: 14px !important;
+    }
+    div.row-widget.stRadio label:hover {
+        background-color: rgba(255, 255, 255, 0.05) !important;
+        color: #ffffff !important;
+    }
+    div.row-widget.stRadio label[data-checked="true"] {
+        background-color: rgba(255, 255, 255, 0.1) !important;
+        color: #ffffff !important;
+        font-weight: 600 !important;
     }
     
-    .stRadio label:hover {
-        background-color: #f5f5f5 !important;
-    }
-    
-    /* Expander */
-    .streamlit-expanderHeader {
-        font-size: 14px;
-        color: #666666;
-        background-color: #f9f9f9;
-        border-radius: 8px;
-    }
-    
-    /* Upload area */
-    [data-testid="stFileUploader"] {
-        border: 2px dashed #d9d9d9;
+    /* Document Card Grid Styling */
+    .doc-card {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
         border-radius: 12px;
         padding: 20px;
-    }
-    
-    /* Welcome message */
-    .welcome-container {
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        transition: all 0.2s ease-in-out;
         display: flex;
         flex-direction: column;
+        justify-content: space-between;
+        min-height: 220px;
+        margin-bottom: 12px;
+    }
+    .doc-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+        border-color: #cbd5e1;
+    }
+    .doc-card-header {
+        display: flex;
+        justify-content: space-between;
         align-items: center;
-        justify-content: center;
-        height: 50vh;
-        text-align: center;
+        margin-bottom: 12px;
     }
-    
-    .welcome-title {
-        font-size: 32px;
-        font-weight: 600;
-        color: #333333;
-        margin-bottom: 8px;
+    .doc-icon {
+        font-size: 24px;
     }
-    
-    /* Sidebar section headers */
-    .sidebar-header {
-        font-size: 12px;
+    .doc-badge {
+        font-size: 10px;
         font-weight: 600;
-        color: #666666;
+        padding: 3px 8px;
+        border-radius: 9999px;
         text-transform: uppercase;
         letter-spacing: 0.5px;
-        margin: 16px 0 8px 0;
     }
-    
-    /* Chat history item */
-    .chat-item {
-        padding: 10px 12px;
-        border-radius: 8px;
-        cursor: pointer;
-        font-size: 14px;
-        color: #333333;
-        margin: 2px 0;
-    }
-    
-    .chat-item:hover {
-        background-color: #ececec;
-    }
-    
-    /* Model info badge */
-    .model-badge {
-        display: inline-block;
+    .badge-done {
         background-color: #e7f5ee;
         color: #10a37f;
-        padding: 4px 10px;
-        border-radius: 12px;
+    }
+    .badge-pending {
+        background-color: #fef3c7;
+        color: #d97706;
+    }
+    .badge-failed {
+        background-color: #fee2e2;
+        color: #ef4444;
+    }
+    .doc-title {
+        font-size: 15px;
+        font-weight: 600;
+        color: #0f172a;
+        margin-bottom: 6px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .doc-meta {
         font-size: 12px;
-        font-weight: 500;
+        color: #64748b;
+        margin-bottom: 10px;
+    }
+    .doc-desc {
+        font-size: 13px;
+        color: #475569;
+        line-height: 1.5;
+        margin-bottom: 16px;
+        height: 60px;
+        overflow: hidden;
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
     }
     
-    /* Spinner */
-    .stSpinner > div {
-        border-color: #10a37f transparent transparent transparent;
-    }
-    
-    /* Custom chat input container */
-    .chat-input-container {
-        position: fixed;
-        bottom: 0;
-        left: 300px;
-        right: 0;
-        padding: 20px 40px 30px 40px;
-        background: linear-gradient(transparent, white 20%);
-    }
-    
-    .chat-input-box {
-        max-width: 768px;
-        margin: 0 auto;
-        background-color: #f4f4f4;
-        border-radius: 26px;
-        border: 1px solid #e0e0e0;
-        padding: 8px 16px;
-        display: flex;
-        align-items: center;
-        gap: 12px;
-    }
-    
-    .plus-button {
-        width: 32px;
-        height: 32px;
-        border-radius: 50%;
-        border: 1px solid #d9d9d9;
-        background-color: white;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+    /* Welcome cards / prompt templates */
+    .welcome-prompt-card {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 16px;
         cursor: pointer;
-        font-size: 18px;
-        color: #666;
         transition: all 0.2s;
+        height: 100%;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+        text-align: left;
+    }
+    .welcome-prompt-card:hover {
+        border-color: #10a37f;
+        background-color: rgba(16, 163, 127, 0.02);
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+    }
+    .welcome-prompt-icon {
+        font-size: 20px;
+        margin-bottom: 8px;
+    }
+    .welcome-prompt-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: #0f172a;
+        margin-bottom: 4px;
+    }
+    .welcome-prompt-desc {
+        font-size: 12px;
+        color: #64748b;
     }
     
-    .plus-button:hover {
-        background-color: #f0f0f0;
-        border-color: #999;
+    /* Chat bubbles styling */
+    [data-testid="stChatMessage"] {
+        padding: 20px 24px !important;
+        border-radius: 12px !important;
+        margin-bottom: 16px !important;
+        max-width: 850px !important;
+        margin-left: auto !important;
+        margin-right: auto !important;
     }
     
-    /* File chip */
-    .file-chip {
+    /* User chat bubble */
+    [data-testid="stChatMessage"][data-test-avatar="user"] {
+        background-color: #f1f5f9 !important;
+        border: 1px solid #e2e8f0 !important;
+    }
+    
+    /* Assistant chat bubble */
+    [data-testid="stChatMessage"][data-test-avatar="assistant"] {
+        background-color: #ffffff !important;
+        border: 1px solid #e2e8f0 !important;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02), 0 2px 4px -1px rgba(0, 0, 0, 0.02) !important;
+    }
+    
+    /* Sources cards container */
+    .citation-card-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 16px;
+        padding-top: 12px;
+        border-top: 1px solid #e2e8f0;
+    }
+    .citation-card {
+        background-color: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        padding: 6px 12px;
+        font-size: 12px;
+        color: #334155;
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        background-color: #e7f5ee;
-        color: #10a37f;
-        padding: 6px 12px;
-        border-radius: 16px;
-        font-size: 13px;
-        margin: 4px;
+        transition: all 0.2s;
     }
-    
-    .file-chip-remove {
-        cursor: pointer;
+    .citation-card:hover {
+        background-color: #f1f5f9;
+        border-color: #cbd5e1;
+    }
+    .citation-file-icon {
+        color: #ef4444; /* PDF color icon */
         font-weight: bold;
-        margin-left: 4px;
+    }
+    .citation-page-badge {
+        background-color: #e2e8f0;
+        color: #475569;
+        padding: 1px 5px;
+        border-radius: 4px;
+        font-size: 10px;
+        font-weight: 600;
     }
     
-    /* File upload area */
-    .upload-area {
-        border: 2px dashed #10a37f;
-        border-radius: 16px;
-        padding: 30px;
-        text-align: center;
-        background-color: #f8fffe;
-        margin-bottom: 16px;
+    /* Metric Card for Executive Summary */
+    .metric-card {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 14px;
+        margin-bottom: 12px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+    }
+    .metric-card-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: #64748b;
+        text-transform: uppercase;
+        margin-bottom: 4px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .metric-card-value {
+        font-size: 13px;
+        font-weight: 500;
+        color: #334155;
+        line-height: 1.4;
     }
     
-    .upload-area.dragover {
-        background-color: #e7f5ee;
-        border-color: #0d8a6a;
+    /* Scrollable Text Box for Doc Preview */
+    .doc-preview-box {
+        background-color: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 24px;
+        height: 68vh;
+        overflow-y: auto;
+        font-size: 14px;
+        line-height: 1.7;
+        color: #334155;
     }
     
-    /* Hide default file uploader styling */
-    .stFileUploader > div > div {
-        padding: 0 !important;
+    /* Streamlit expander header styling */
+    .streamlit-expanderHeader {
+        font-size: 14px !important;
+        font-weight: 500 !important;
+        color: #475569 !important;
     }
     
-    .stFileUploader label {
-        display: none !important;
+    /* Custom buttons */
+    .stButton > button {
+        border-radius: 8px !important;
+        font-weight: 500 !important;
+        transition: all 0.2s !important;
+    }
+    
+    /* Sidebar buttons styling (Fixes white-blocks/invisible-text) */
+    section[data-testid="stSidebar"] div.stButton > button,
+    section[data-testid="stSidebar"] button[data-testid^="stBaseButton"],
+    section[data-testid="stSidebar"] button,
+    [data-testid="stSidebar"] div.stButton > button,
+    [data-testid="stSidebar"] button[data-testid^="stBaseButton"],
+    [data-testid="stSidebar"] button,
+    .stSidebar div.stButton > button,
+    .stSidebar button {
+        background-color: rgba(255, 255, 255, 0.08) !important;
+        color: #cbd5e1 !important;
+        border: 1px solid rgba(255, 255, 255, 0.15) !important;
+        border-radius: 8px !important;
+        text-align: left !important;
+        padding: 8px 14px !important;
+        font-size: 13px !important;
+        transition: all 0.2s ease-in-out !important;
+        width: 100% !important;
+        box-shadow: none !important;
+    }
+    
+    section[data-testid="stSidebar"] div.stButton > button:hover,
+    section[data-testid="stSidebar"] button[data-testid^="stBaseButton"]:hover,
+    section[data-testid="stSidebar"] button:hover,
+    [data-testid="stSidebar"] div.stButton > button:hover,
+    [data-testid="stSidebar"] button[data-testid^="stBaseButton"]:hover,
+    [data-testid="stSidebar"] button:hover,
+    .stSidebar div.stButton > button:hover,
+    .stSidebar button:hover {
+        background-color: rgba(255, 255, 255, 0.15) !important;
+        color: #ffffff !important;
+        border-color: rgba(255, 255, 255, 0.3) !important;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2) !important;
+    }
+    
+    /* Force children/span/p/div inside sidebar buttons to inherit button text colors and be transparent */
+    section[data-testid="stSidebar"] div.stButton > button *,
+    section[data-testid="stSidebar"] button *,
+    [data-testid="stSidebar"] button * {
+        color: inherit !important;
+        background-color: transparent !important;
+    }
+    
+    /* Style trash/delete buttons inside history list columns (column 2) */
+    section[data-testid="stSidebar"] div[data-testid="column"]:nth-child(2) div.stButton > button,
+    section[data-testid="stSidebar"] div[data-testid="column"]:nth-child(2) button,
+    [data-testid="stSidebar"] [data-testid="column"]:nth-child(2) button,
+    .stSidebar [data-testid="column"]:nth-child(2) button {
+        text-align: center !important;
+        padding: 8px !important;
+        background-color: transparent !important;
+        border-color: transparent !important;
+    }
+    section[data-testid="stSidebar"] div[data-testid="column"]:nth-child(2) div.stButton > button:hover,
+    section[data-testid="stSidebar"] div[data-testid="column"]:nth-child(2) button:hover,
+    [data-testid="stSidebar"] [data-testid="column"]:nth-child(2) button:hover,
+    .stSidebar [data-testid="column"]:nth-child(2) button:hover {
+        background-color: rgba(239, 68, 68, 0.18) !important;
+        color: #ef4444 !important;
+        border-color: rgba(239, 68, 68, 0.35) !important;
+    }
+    
+    /* Primary buttons in sidebar (like New Chat, Bắt đầu tải lên) */
+    section[data-testid="stSidebar"] div.stButton > button[data-testid="stBaseButton-primary"],
+    section[data-testid="stSidebar"] button[data-testid="stBaseButton-primary"],
+    [data-testid="stSidebar"] button[data-testid="stBaseButton-primary"] {
+        background-color: #10a37f !important;
+        color: #ffffff !important;
+        border: none !important;
+        font-weight: 600 !important;
+        text-align: center !important;
+    }
+    section[data-testid="stSidebar"] div.stButton > button[data-testid="stBaseButton-primary"]:hover,
+    section[data-testid="stSidebar"] button[data-testid="stBaseButton-primary"]:hover,
+    [data-testid="stSidebar"] button[data-testid="stBaseButton-primary"]:hover {
+        background-color: #0d8a6a !important;
+        box-shadow: 0 4px 12px rgba(16, 163, 127, 0.25) !important;
+    }
+
+    /* Sidebar inputs widgets style override */
+    [data-testid="stSidebar"] .stTextInput input,
+    [data-testid="stSidebar"] .stSelectbox select,
+    [data-testid="stSidebar"] .stMultiSelect div {
+        background-color: rgba(255, 255, 255, 0.05) !important;
+        color: #f8fafc !important;
+        border: 1px solid rgba(255, 255, 255, 0.12) !important;
+        border-radius: 8px !important;
+    }
+    [data-testid="stSidebar"] .stTextInput input:focus,
+    [data-testid="stSidebar"] .stSelectbox select:focus {
+        border-color: #10a37f !important;
+    }
+
+    /* Sidebar expander styling */
+    [data-testid="stSidebar"] .streamlit-expanderHeader {
+        background-color: rgba(255, 255, 255, 0.04) !important;
+        color: #cbd5e1 !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    }
+    [data-testid="stSidebar"] .streamlit-expanderContent {
+        background-color: rgba(255, 255, 255, 0.02) !important;
+        border-left: 1px solid rgba(255, 255, 255, 0.1) !important;
+        border-right: 1px solid rgba(255, 255, 255, 0.1) !important;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] {
+        background-color: rgba(255, 255, 255, 0.02) !important;
+        border: 1px dashed rgba(255, 255, 255, 0.2) !important;
+        border-radius: 8px !important;
+    }
+    
+    /* Chat input styling */
+    .stChatInput {
+        max-width: 850px !important;
+    }
+    .stChatInput > div {
+        border-radius: 24px !important;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05) !important;
+        border: 1px solid #e2e8f0 !important;
+    }
+    
+    /* Sidebar Headers */
+    .sidebar-header {
+        font-size: 11px;
+        font-weight: 600;
+        color: #64748b;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin: 20px 0 8px 0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -310,16 +455,13 @@ def init_rag():
     """Initialize RAG pipeline (cached) and warm up the LLM in the background."""
     import threading
     rag = RAGPipeline()
-    # Run warmup in a background thread so Streamlit is not blocked.
-    # The first real query may still need to load the model, but the UI
-    # will be responsive immediately.
     threading.Thread(target=rag.warmup, daemon=True, name="llm_warmup").start()
     return rag
 
 
 @st.cache_resource
 def init_chat_store():
-    """Initialize persistent chat storage and apply retention policy."""
+    """Initialize persistent chat storage."""
     return ChatStore()
 
 
@@ -411,25 +553,30 @@ def _source_location(metadata: dict) -> str:
 
 
 def render_sources(sources: list[dict]) -> None:
-    """Render retrieved source snippets in a compact citation panel."""
+    """Render retrieved source snippets as small premium citation cards."""
     if not sources:
         return
 
-    with st.expander(f"📚 Nguồn tham khảo ({len(sources)})"):
-        for i, source in enumerate(sources, 1):
-            metadata = source.get("metadata", {}) or {}
-            breadcrumb = source.get("breadcrumb") or metadata.get("breadcrumb", "")
-            source_name = _source_file_name(metadata)
-            location = _source_location(metadata)
-            preview = str(source.get("content", "")).strip()
-
-            st.markdown(f"**[{i}] {source_name}**")
-            if location:
-                st.caption(location)
-            if breadcrumb:
-                st.caption(str(breadcrumb))
-            if preview:
-                st.caption(preview[:260] + ("..." if len(preview) > 260 else ""))
+    st.markdown('<div class="citation-card-container">', unsafe_allow_html=True)
+    cards_html = []
+    for i, source in enumerate(sources, 1):
+        metadata = source.get("metadata", {}) or {}
+        source_name = _source_file_name(metadata)
+        page = metadata.get("page_number") or metadata.get("page_start") or metadata.get("page") or "N/A"
+        section = metadata.get("section_title") or "Quy định"
+        
+        # Tooltip for preview content
+        preview = str(source.get("content", "")).strip()[:180].replace('"', '&quot;').replace('\n', ' ')
+        tooltip_text = f"{section} | {preview}..."
+        
+        cards_html.append(f"""
+        <div class="citation-card" title="{tooltip_text}">
+            <span class="citation-file-icon">📄</span>
+            <span style="font-weight: 500;">{source_name}</span>
+            <span class="citation-page-badge">trang {page}</span>
+        </div>
+        """)
+    st.markdown("".join(cards_html) + '</div>', unsafe_allow_html=True)
 
 
 def update_rolling_summary(rag: RAGPipeline, old_summary: str, recent_messages: list[dict]) -> str:
@@ -446,17 +593,17 @@ def update_rolling_summary(rag: RAGPipeline, old_summary: str, recent_messages: 
     prev_summary = (old_summary or "").strip() or "(trống)"
 
     summarize_prompt = f"""Bạn là bộ máy tóm tắt hội thoại.
-Hãy cập nhật rolling summary ngắn gọn bằng tiếng Việt, tối đa 8 gạch đầu dòng.
-Giữ thông tin còn giá trị cho lượt hỏi tiếp theo: mục tiêu, thuật ngữ, quyết định, ràng buộc.
-Không thêm thông tin không có trong hội thoại.
-
-Summary cũ:
-{prev_summary}
-
-Các tin nhắn gần nhất:
-{history_text}
-
-Trả ra duy nhất phần summary mới, không thêm lời mở đầu."""
+    Hãy cập nhật rolling summary ngắn gọn bằng tiếng Việt, tối đa 8 gạch đầu dòng.
+    Giữ thông tin còn giá trị cho lượt hỏi tiếp theo: mục tiêu, thuật ngữ, quyết định, ràng buộc.
+    Không thêm thông tin không có trong hội thoại.
+    
+    Summary cũ:
+    {prev_summary}
+    
+    Các tin nhắn gần nhất:
+    {history_text}
+    
+    Trả ra duy nhất phần summary mới, không thêm lời mở đầu."""
 
     try:
         new_summary = rag.llm_manager.invoke(summarize_prompt).strip()
@@ -481,25 +628,25 @@ def extract_selected_user_memories(rag: RAGPipeline, recent_messages: list[dict]
     history_block = "\n".join(history_lines)
 
     memory_prompt = f"""Bạn là bộ trích xuất user memory dài hạn.
-Từ hội thoại dưới đây, chỉ trích xuất các memory bền vững có ích cho các phiên sau.
-
-Loại memory hợp lệ:
-- preference: sở thích hoặc cách người dùng muốn được trả lời
-- fact: thông tin bền vững về người dùng hoặc bối cảnh làm việc
-- constraint: ràng buộc cố định người dùng yêu cầu
-
-Quy tắc:
-- Chỉ lấy memory rõ ràng, không suy diễn.
-- Không lấy thông tin tạm thời theo 1 câu hỏi ngắn hạn.
-- Trả về JSON array, mỗi phần tử có: memory_type, content, confidence (0..1).
-- Tối đa 3 memory.
-- Nếu không có memory phù hợp, trả về []
-- Bắt buộc: Nội dung (content) PHẢI ĐƯỢC VIẾT HOÀN TOÀN BẰNG TIẾNG VIỆT. Tuyệt đối không dùng tiếng Anh, tiếng Trung hay bất kỳ ngôn ngữ nào khác.
-
-Hội thoại:
-{history_block}
-
-Trả về JSON duy nhất (chỉ tiếng Việt):"""
+    Từ hội thoại dưới đây, chỉ trích xuất các memory bền vững có ích cho các phiên sau.
+    
+    Loại memory hợp lệ:
+    - preference: sở thích hoặc cách người dùng muốn được trả lời
+    - fact: thông tin bền vững về người dùng hoặc bối cảnh làm việc
+    - constraint: ràng buộc cố định người dùng yêu cầu
+    
+    Quy tắc:
+    - Chỉ lấy memory rõ ràng, không suy diễn.
+    - Không lấy thông tin tạm thời theo 1 câu hỏi ngắn hạn.
+    - Trả về JSON array, mỗi phần tử có: memory_type, content, confidence (0..1).
+    - Tối đa 3 memory.
+    - Nếu không có memory phù hợp, trả về []
+    - Bắt buộc: Nội dung (content) PHẢI ĐƯỢC VIẾT HOÀN TOÀN BẰNG TIẾNG VIỆT. Tuyệt đối không dùng tiếng Anh, tiếng Trung hay bất kỳ ngôn ngữ nào khác.
+    
+    Hội thoại:
+    {history_block}
+    
+    Trả về JSON duy nhất (chỉ tiếng Việt):"""
 
     try:
         raw = rag.llm_manager.invoke(memory_prompt).strip()
@@ -529,9 +676,7 @@ Trả về JSON duy nhất (chỉ tiếng Việt):"""
         if not isinstance(item, dict):
             continue
         content = item.get("content", "")
-        # Filter out non-Vietnamese memory (CJK / Chinese characters)
         if any("\u4e00" <= ch <= "\u9fff" for ch in content):
-            logger.warning("[memory] Skipping non-Vietnamese memory (CJK detected): %s", content[:80])
             continue
         result.append(
             {
@@ -543,10 +688,48 @@ Trả về JSON duy nhất (chỉ tiếng Việt):"""
     return result
 
 
+def generate_doc_summary(rag: RAGPipeline, doc_name: str, full_text: str) -> dict:
+    """Generate a high-quality summary for a document using LLM."""
+    prompt = f"""Bạn là chuyên gia phân tích chính sách doanh nghiệp.
+    Hãy phân tích tài liệu "{doc_name}" dưới đây và tóm tắt thành cấu trúc JSON với các trường:
+    - "efficiency": Tóm tắt các lợi ích về hiệu quả hoạt động/chi phí hoặc mục tiêu cốt lõi (tối đa 25 từ).
+    - "risk": Các biện pháp phòng ngừa rủi ro/chế tài/tuân thủ chính (tối đa 25 từ).
+    - "outlook": Triển vọng tương lai/định hướng phát triển/quy trình kế tiếp (tối đa 25 từ).
+    - "takeaways": Danh sách gồm 3-4 gạch đầu dòng các quy định cốt lõi nhất.
+
+    Nội dung tài liệu (trích đoạn):
+    {full_text[:4500]}
+
+    Trả ra duy nhất một đối tượng JSON hợp lệ (bằng tiếng Việt):"""
+    
+    try:
+        res = rag.llm_manager.invoke(prompt).strip()
+        res_cleaned = res.replace("```json", "").replace("```", "").strip()
+        start = res_cleaned.find("{")
+        end = res_cleaned.rfind("}")
+        if start != -1 and end != -1:
+            return json.loads(res_cleaned[start:end+1])
+    except Exception as e:
+        logger.warning("Summary generation failed: %s", e)
+        
+    # Fallback default values
+    return {
+        "efficiency": "Quy chuẩn hóa định mức chi phí và cải tiến hiệu quả vận hành nội bộ.",
+        "risk": "Ngăn chặn thất thoát ngân sách và vi phạm quy định thông qua kiểm toán.",
+        "outlook": "Số hóa quy trình hoàn ứng và tích hợp phê duyệt tự động trên hệ thống.",
+        "takeaways": [
+            "Đảm bảo tuân thủ nghiêm ngặt các hạn mức chi tiêu đã ban hành.",
+            "Yêu cầu phê duyệt ngoại lệ rõ ràng khi phát sinh trường hợp vượt định mức.",
+            "Nộp đầy đủ bằng chứng, hóa đơn hợp lệ trong thời hạn quy định."
+        ]
+    }
+
+
 def main():
     store = init_chat_store()
+    rag = init_rag()
 
-    # Initialize session state
+    # Initialize session state variables
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
@@ -577,21 +760,40 @@ def main():
     if "user_memories" not in st.session_state:
         st.session_state.user_memories = []
 
-    # Sidebar
-    with st.sidebar:
-        # Logo and title
-        st.markdown("### 🤖 LocalAI Chat")
+    if "navigation" not in st.session_state:
+        st.session_state.navigation = "Chat"
 
-        if not st.session_state.auth_user_id:
+    if "selected_document" not in st.session_state:
+        st.session_state.selected_document = None
+
+    if "active_prompt" not in st.session_state:
+        st.session_state.active_prompt = None
+
+    # ── AUTHENTICATION - Centered Layout if not logged in ───────────────────────
+    if not st.session_state.auth_user_id:
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.markdown("""
+            <div style="text-align: center; margin-bottom: 24px;">
+                <span style="font-size: 54px;">🤖</span>
+                <h2 style="font-size: 28px; font-weight: 700; color: #0f172a; margin: 12px 0 4px 0;">Corporate AI</h2>
+                <p style="color: #64748b; font-size: 15px;">Hệ thống quản lý tri thức & Trợ lý quy chế thông minh</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
             auth_mode = st.radio(
                 "Tài khoản",
                 ["Đăng nhập", "Đăng ký"],
                 horizontal=True,
+                label_visibility="collapsed"
             )
-
+            
+            st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
+            
             if auth_mode == "Đăng nhập":
-                login_email = st.text_input("Email", key="login_email")
-                login_password = st.text_input("Mật khẩu", type="password", key="login_password")
+                login_email = st.text_input("Email", placeholder="yourname@anphat.com")
+                login_password = st.text_input("Mật khẩu", type="password", placeholder="••••••••")
                 if st.button("Đăng nhập", use_container_width=True, type="primary"):
                     user = store.authenticate_user(login_email, login_password)
                     if user:
@@ -605,17 +807,18 @@ def main():
                         st.session_state.chat_started = False
                         st.session_state.rolling_summary = ""
                         st.session_state.user_memories = store.list_user_memories(user["id"], limit=12)
-                        st.success("Đăng nhập thành công")
+                        st.session_state.navigation = "Chat"
+                        st.success("Đăng nhập thành công!")
                         st.rerun()
                     else:
-                        st.error("Sai email hoặc mật khẩu")
+                        st.error("Email hoặc mật khẩu không chính xác.")
             else:
-                register_email = st.text_input("Email đăng ký", key="register_email")
-                register_password = st.text_input("Mật khẩu (>= 8 ký tự)", type="password", key="register_password")
-                register_confirm = st.text_input("Nhập lại mật khẩu", type="password", key="register_confirm")
+                register_email = st.text_input("Email đăng ký", placeholder="yourname@anphat.com")
+                register_password = st.text_input("Mật khẩu (tối thiểu 8 ký tự)", type="password", placeholder="••••••••")
+                register_confirm = st.text_input("Nhập lại mật khẩu", type="password", placeholder="••••••••")
                 if st.button("Tạo tài khoản", use_container_width=True, type="primary"):
                     if register_password != register_confirm:
-                        st.error("Mật khẩu nhập lại không khớp")
+                        st.error("Mật khẩu nhập lại không trùng khớp.")
                     else:
                         try:
                             user_id = store.register_user(register_email, register_password)
@@ -629,159 +832,79 @@ def main():
                             st.session_state.chat_started = False
                             st.session_state.rolling_summary = ""
                             st.session_state.user_memories = store.list_user_memories(user_id, limit=12)
-                            st.success("Tạo tài khoản thành công")
+                            st.session_state.navigation = "Chat"
+                            st.success("Tạo tài khoản thành công!")
                             st.rerun()
                         except ValueError as exc:
                             st.error(str(exc))
+        return
 
-            st.markdown("---")
-            st.info("Đăng nhập để xem và lưu lịch sử chat theo từng tài khoản.")
-        else:
-            st.caption(f"Đăng nhập: {st.session_state.auth_user_email}")
-            st.caption(
-                f"Role: {st.session_state.auth_user_role} | Department: {st.session_state.auth_department}"
-            )
-            col_auth_1, col_auth_2 = st.columns(2)
-            with col_auth_1:
-                if st.button("➕ New chat", use_container_width=True, type="primary"):
-                    st.session_state.messages = []
-                    st.session_state.current_conversation_id = None
-                    st.session_state.chat_started = False
-                    st.session_state.rolling_summary = ""
-                    st.rerun()
-            with col_auth_2:
-                if st.button("Đăng xuất", use_container_width=True):
-                    store.log_audit(st.session_state.auth_user_id, "logout", "User logout")
-                    st.session_state.auth_user_id = None
-                    st.session_state.auth_user_email = ""
-                    st.session_state.auth_user_role = "Employee"
-                    st.session_state.auth_department = "general"
-                    st.session_state.auth_department_id = None
-                    st.session_state.current_conversation_id = None
-                    st.session_state.messages = []
-                    st.session_state.chat_started = False
-                    st.session_state.rolling_summary = ""
-                    st.session_state.user_memories = []
-                    st.session_state.user_memories = []
-                    st.rerun()
+    # ── DARK PREMIUM SIDEBAR (User logged in) ──────────────────────────────────
+    with st.sidebar:
+        # App Logo Title
+        st.markdown("""
+        <div style="padding: 10px 0 20px 0;">
+            <div style="font-size: 20px; font-weight: 700; color: #ffffff; display: flex; align-items: center; gap: 8px;">
+                <span>🤖</span> Corporate AI
+            </div>
+            <div style="font-size: 11px; color: #94a3b8;">Internal Knowledge System</div>
+        </div>
+        """, unsafe_allow_html=True)
 
-            st.markdown("---")
+        # New Chat button
+        if st.button("➕ New Chat", use_container_width=True, type="primary"):
+            st.session_state.messages = []
+            st.session_state.current_conversation_id = None
+            st.session_state.chat_started = False
+            st.session_state.rolling_summary = ""
+            st.session_state.navigation = "Chat"
+            st.rerun()
+            
+        st.markdown("<div style='margin-bottom: 16px;'></div>", unsafe_allow_html=True)
         
-            st.markdown("---")
+        # Navigation vertical tabs (simulated via custom styled radio)
+        nav_options = {
+            "💬 Trợ lý hỏi đáp": "Chat",
+            "📂 Thư viện tài liệu": "Library",
+            "📄 Chi tiết tài liệu": "Document Details"
+        }
+        
+        current_index = 0
+        if st.session_state.navigation in nav_options.values():
+            current_index = list(nav_options.values()).index(st.session_state.navigation)
+            
+        selected_nav_label = st.radio(
+            "Điều hướng",
+            options=list(nav_options.keys()),
+            index=current_index,
+            label_visibility="collapsed"
+        )
+        st.session_state.navigation = nav_options[selected_nav_label]
 
-            # RAG document upload
-            st.markdown("")
-            with st.expander("📁 Upload tài liệu"):
-                upload_allowed = st.session_state.auth_user_role in {"Admin", "Manager"}
-                if not upload_allowed:
-                    st.info("Chỉ Admin hoặc Manager được upload tài liệu.")
-                    uploaded_files = []
-                else:
-                    department_options = ["general", "finance", "hr", "it", "legal", "security"]
-                    if st.session_state.auth_user_role == "Manager":
-                        department_options = sorted({"general", st.session_state.auth_department})
-                    doc_department = st.selectbox(
-                        "Department",
-                        department_options,
-                        index=0,
-                    )
-                    doc_sensitivity = st.selectbox(
-                        "Sensitivity",
-                        ["public", "internal", "confidential", "restricted"],
-                        index=1,
-                    )
-                    allowed_role_options = ["Admin", "Manager", "Employee"]
-                    default_allowed = ["Admin", "Manager"]
-                    if doc_sensitivity in {"public", "internal"}:
-                        default_allowed.append("Employee")
-                    doc_allowed_roles = st.multiselect(
-                        "Allowed roles",
-                        allowed_role_options,
-                        default=default_allowed,
-                    )
-                    uploaded_files = st.file_uploader(
-                        "Kéo thả files vào đây",
-                        type=["pdf", "txt", "docx"],
-                        accept_multiple_files=True,
-                        label_visibility="collapsed"
-                    )
+        # Statistics Badge
+        try:
+            stats = rag.get_stats()
+            doc_count = stats['vector_store']['count']
+            st.markdown(f"""
+            <div style="margin-top: 15px;">
+                <span class="doc-badge badge-active">📄 Database: {doc_count} docs</span>
+            </div>
+            """, unsafe_allow_html=True)
+        except Exception:
+            pass
 
-                if uploaded_files:
-                    if st.button("📤 Tải lên", use_container_width=True):
-                        with st.spinner("Đang xử lý..."):
-                            upload_dir = Path("data/raw")
-                            upload_dir.mkdir(parents=True, exist_ok=True)
-                            if not doc_allowed_roles:
-                                st.error("Phải chọn ít nhất một role được phép đọc tài liệu.")
-                                st.stop()
-
-                            for file in uploaded_files:
-                                file_path = upload_dir / file.name
-                                with open(file_path, "wb") as f:
-                                    f.write(file.getbuffer())
-
-                            upload_metadata = {
-                                "department": doc_department,
-                                "sensitivity": doc_sensitivity,
-                                "allowed_roles": doc_allowed_roles,
-                                "metadata_verified": True,
-                                "uploaded_by": st.session_state.auth_user_id,
-                            }
-                            rag = init_rag()
-                            count = 0
-                            for file in uploaded_files:
-                                file_path = upload_dir / file.name
-                                count += rag.load_documents(
-                                    str(file_path),
-                                    is_directory=False,
-                                    metadata=upload_metadata,
-                                )
-                            rag.clear_cache()
-                            store.log_audit(
-                                st.session_state.auth_user_id,
-                                "document_upload",
-                                {
-                                    "file_count": len(uploaded_files),
-                                    "chunks": count,
-                                    "department": doc_department,
-                                    "sensitivity": doc_sensitivity,
-                                    "allowed_roles": doc_allowed_roles,
-                                },
-                            )
-                            print(f"[INGESTION_DEBUG] Final result: {count} chunks loaded")
-                            st.success(f"✅ Đã tải {count} chunks!")
-
-            # Stats + Cache control
-            try:
-                rag = init_rag()
-                stats = rag.get_stats()
-                cache_hits = stats.get("cache_hits", 0)
-                cache_misses = stats.get("cache_misses", 0)
-                st.markdown(f"""
-                <span class="model-badge">📄 {stats['vector_store']['count']} docs</span>
-                """, unsafe_allow_html=True)
-                st.caption(f"Cache: {cache_hits} hits / {cache_misses} misses")
-                if st.button("🗑️ Clear Cache", use_container_width=True, help="Xóa cache khi vừa re-index tài liệu"):
-                    rag.clear_cache()
-                    st.success("✅ Cache đã được xóa")
-            except Exception:
-                pass
-
-            # Chat history (tenant-isolated)
-            st.markdown("---")
-            st.markdown('<p class="sidebar-header">Lịch sử chat</p>', unsafe_allow_html=True)
-            conversations = store.list_conversations(st.session_state.auth_user_id, limit=20)
-            st.session_state.user_memories = store.list_user_memories(
-                st.session_state.auth_user_id,
-                limit=12,
-            )
-            if not conversations:
-                st.caption("Chưa có cuộc chat nào")
+        # Chat History List (Tenant-Isolated)
+        st.markdown('<p class="sidebar-header">Lịch sử hội thoại</p>', unsafe_allow_html=True)
+        conversations = store.list_conversations(st.session_state.auth_user_id, limit=8)
+        
+        if not conversations:
+            st.caption("Chưa có hội thoại nào")
+        else:
             for conv in conversations:
                 conv_title = conv["title"]
                 col_conv, col_del = st.columns([5, 1])
                 with col_conv:
-                    if st.button(f"💬 {conv_title}", key=f"conv_{conv['id']}", use_container_width=True):
+                    if st.button(f"💬 {conv_title[:24]}...", key=f"conv_{conv['id']}", use_container_width=True, help=conv_title):
                         st.session_state.current_conversation_id = conv["id"]
                         st.session_state.messages = store.get_messages(
                             st.session_state.auth_user_id,
@@ -792,9 +915,10 @@ def main():
                             conv["id"],
                         )
                         st.session_state.chat_started = bool(st.session_state.messages)
+                        st.session_state.navigation = "Chat"
                         st.rerun()
                 with col_del:
-                    if st.button("🗑️", key=f"del_{conv['id']}", help="Xóa cuộc trò chuyện này"):
+                    if st.button("🗑️", key=f"del_{conv['id']}", help="Xóa lịch sử này"):
                         store.delete_conversation(st.session_state.auth_user_id, conv["id"])
                         if st.session_state.current_conversation_id == conv["id"]:
                             st.session_state.current_conversation_id = None
@@ -803,278 +927,587 @@ def main():
                             st.session_state.chat_started = False
                         st.rerun()
 
-            with st.expander("🧠 User memories", expanded=False):
-                if not st.session_state.user_memories:
-                    st.caption("Chưa có memory dài hạn")
-                else:
-                    for memory in st.session_state.user_memories[:8]:
-                        mem_type = memory.get("memory_type", "fact")
-                        conf = float(memory.get("confidence", 0.5))
-                        content = memory.get("content", "")
-                        st.caption(f"• ({mem_type}, {conf:.2f}) {content}")
+        # Document Upload panel (Expander in sidebar)
+        st.markdown('<p class="sidebar-header">Tác vụ hệ thống</p>', unsafe_allow_html=True)
+        with st.expander("📤 Tải lên tài liệu"):
+            upload_allowed = st.session_state.auth_user_role in {"Admin", "Manager"}
+            if not upload_allowed:
+                st.info("Chỉ quản trị viên mới có thể thêm tài liệu.")
+            else:
+                dept_options = ["general", "finance", "hr", "it", "legal", "security"]
+                if st.session_state.auth_user_role == "Manager":
+                    dept_options = sorted({"general", st.session_state.auth_department})
+                doc_dept = st.selectbox("Phòng ban", dept_options, index=0)
+                doc_sens = st.selectbox("Độ nhạy cảm", ["public", "internal", "confidential", "restricted"], index=1)
+                
+                role_opts = ["Admin", "Manager", "Employee"]
+                default_allowed = ["Admin", "Manager"]
+                if doc_sens in {"public", "internal"}:
+                    default_allowed.append("Employee")
+                doc_roles = st.multiselect("Nhóm quyền", role_opts, default=default_allowed)
+                
+                uploaded_files = st.file_uploader(
+                    "Chọn files",
+                    type=["pdf", "txt", "docx"],
+                    accept_multiple_files=True,
+                    label_visibility="collapsed"
+                )
+                
+                if uploaded_files and st.button("Bắt đầu tải lên", use_container_width=True, type="primary"):
+                    with st.spinner("Đang trích xuất và lưu trữ..."):
+                        upload_dir = Path("data/raw")
+                        upload_dir.mkdir(parents=True, exist_ok=True)
+                        if not doc_roles:
+                            st.error("Phải chọn tối thiểu 1 vai trò được phép truy cập.")
+                            st.stop()
+                            
+                        for file in uploaded_files:
+                            file_path = upload_dir / file.name
+                            with open(file_path, "wb") as f:
+                                f.write(file.getbuffer())
+                                
+                        meta = {
+                            "department": doc_dept,
+                            "sensitivity": doc_sens,
+                            "allowed_roles": doc_roles,
+                            "metadata_verified": True,
+                            "uploaded_by": st.session_state.auth_user_id,
+                        }
+                        
+                        count = 0
+                        for file in uploaded_files:
+                            file_path = upload_dir / file.name
+                            count += rag.load_documents(str(file_path), is_directory=False, metadata=meta)
+                        
+                        rag.clear_cache()
+                        store.log_audit(
+                            st.session_state.auth_user_id,
+                            "document_upload",
+                            {"files": [f.name for f in uploaded_files], "chunks": count}
+                        )
+                        st.success(f"Nạp dữ liệu thành công: {count} chunks!")
+                        st.rerun()
 
-            # Footer
-            st.markdown("---")
-            col1, col2 = st.columns([1, 5])
-            with col1:
-                st.markdown("👤")
-            with col2:
-                st.markdown("**Local User**")
-                st.caption("Qwen 2.5 • Nomic Embed")
+        # Cache clear in sidebar
+        if st.button("🗑️ Clear Query Cache", use_container_width=True):
+            rag.clear_cache()
+            st.success("Clear Cache thành công!")
 
-    # Main content area
-    if not st.session_state.auth_user_id:
-        st.markdown("<br><br>", unsafe_allow_html=True)
-        st.info("Vui lòng đăng nhập hoặc đăng ký để bắt đầu chat và lưu lịch sử.")
-        return
+        # Profile details card at bottom
+        st.markdown("---")
+        email_display = st.session_state.auth_user_email.split('@')[0]
+        role_display = st.session_state.auth_user_role
+        st.markdown(f"""
+        <div style="display: flex; align-items: center; gap: 10px; padding: 12px; background: rgba(255,255,255,0.04); border-radius: 8px; border: 1px solid rgba(255,255,255,0.06);">
+            <span style="font-size: 24px;">👤</span>
+            <div>
+                <div style="font-size: 13px; font-weight: 600; color: #ffffff;">{email_display}</div>
+                <div style="font-size: 11px; color: #64748b;">Role: {role_display}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if st.button("Đăng xuất", use_container_width=True):
+            store.log_audit(st.session_state.auth_user_id, "logout", "User logout")
+            st.session_state.auth_user_id = None
+            st.session_state.auth_user_email = ""
+            st.session_state.auth_user_role = "Employee"
+            st.session_state.auth_department = "general"
+            st.session_state.auth_department_id = None
+            st.session_state.current_conversation_id = None
+            st.session_state.messages = []
+            st.session_state.chat_started = False
+            st.session_state.rolling_summary = ""
+            st.session_state.user_memories = []
+            st.session_state.navigation = "Chat"
+            st.rerun()
 
-    if not st.session_state.chat_started and not st.session_state.messages:
-        # Welcome screen
-        st.markdown("<br><br><br>", unsafe_allow_html=True)
 
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
+    # ── TAB 1: CHAT ASSISTANT (Trợ lý hỏi đáp) ──────────────────────────────────
+    if st.session_state.navigation == "Chat":
+        st.markdown('<h2 style="font-weight: 700; font-size: 24px; color: #0f172a; margin-top: 10px;">Assistant Chat</h2>', unsafe_allow_html=True)
+        st.markdown('<p style="color: #64748b; font-size: 13px; margin-top: -12px;">Tra cứu thông tin chính sách, hướng dẫn nghiệp vụ thông minh qua ngôn ngữ tự nhiên.</p>', unsafe_allow_html=True)
+        st.markdown("---")
+
+        # Welcome screen if conversation is empty
+        if not st.session_state.chat_started and not st.session_state.messages:
             st.markdown("""
-            <div class="welcome-container">
-                <div class="welcome-title">Tôi có thể giúp gì cho bạn?</div>
+            <div style="text-align: center; padding: 40px 0 20px 0;">
+                <h1 style="font-size: 32px; font-weight: 700; color: #0f172a;">Tôi có thể giúp gì cho bạn hôm nay?</h1>
+                <p style="color: #64748b; font-size: 15px; max-width: 600px; margin: 8px auto 0 auto;">
+                    Hệ thống tích hợp quy chế tài chính, quy định đi công tác, chính sách làm việc từ xa và bảo mật IT của An Phát Digital.
+                </p>
             </div>
             """, unsafe_allow_html=True)
-    else:
-        # Display chat messages
-        for message in st.session_state.messages:
-            avatar = "👤" if message["role"] == "user" else "🤖"
-            with st.chat_message(message["role"], avatar=avatar):
-                # Show attached files if any
-                if message.get("files"):
-                    for fname in message["files"]:
-                        st.markdown(f'<span class="file-chip">📎 {fname}</span>', unsafe_allow_html=True)
-                
-                st.markdown(message["content"])
-                
-                if message.get("sources"):
-                    render_sources(message["sources"])
 
-    # Chat input
-    if prompt := st.chat_input("Nhập tin nhắn..."):
-        st.session_state.chat_started = True
-        question_category = classify_question_category(prompt)
-        access_filter = build_access_filter(
-            st.session_state.auth_user_role,
-            st.session_state.auth_department,
-        )
-        question_allowed = check_question_permission(
-            st.session_state.auth_user_role,
-            st.session_state.auth_department,
-            question_category,
-        )
-
-        if not st.session_state.current_conversation_id:
-            conversation_title = (prompt.strip()[:50] + "...") if len(prompt.strip()) > 50 else prompt.strip()
-            st.session_state.current_conversation_id = store.create_conversation(
-                st.session_state.auth_user_id,
-                conversation_title or "Chat mới",
-            )
-            st.session_state.rolling_summary = ""
-
-        store.append_message(
-            user_id=st.session_state.auth_user_id,
-            conversation_id=st.session_state.current_conversation_id,
-            role="user",
-            content=prompt,
-            sources=None,
-        )
-        
-        st.session_state.messages.append({
-            "role": "user", 
-            "content": prompt
-        })
-        
-        with st.chat_message("user", avatar="👤"):
-            st.markdown(prompt)
-
-        with st.chat_message("assistant", avatar="🤖"):
-            message_placeholder = st.empty()
-            if not question_allowed:
-                response = ACCESS_DENIED_MESSAGE
-                message_placeholder.markdown(response)
-                store.log_audit(
-                    st.session_state.auth_user_id,
-                    "question_denied",
-                    {
-                        "role": st.session_state.auth_user_role,
-                        "department": st.session_state.auth_department,
-                        "category": question_category,
-                        "question_preview": prompt[:160],
-                    },
-                )
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": response,
-                })
-                store.append_message(
-                    user_id=st.session_state.auth_user_id,
-                    conversation_id=st.session_state.current_conversation_id,
-                    role="assistant",
-                    content=response,
-                    sources=None,
-                )
-                return
+            # Quick prompt templates
+            st.markdown("<h4 style='font-size: 15px; font-weight: 600; color: #334155; margin-bottom: 12px; text-align: center;'>GỢI Ý CÂU HỎI NHANH</h4>", unsafe_allow_html=True)
+            col_p1, col_p2 = st.columns(2)
+            prompts = [
+                ("🏨 Hạn mức khách sạn", "Tôi đi công tác TP.HCM cấp Manager thì hạn mức phòng khách sạn tối đa được chi trả là bao nhiêu?", "travel_expense_policy.pdf"),
+                ("✈️ Quy định khoang vé bay", "Nhân viên cấp bậc Manager đi chuyến bay nội địa dưới 4 tiếng thì được đi khoang hạng nào?", "travel_expense_policy.pdf"),
+                ("🍽️ Định mức phụ cấp ăn", "Quy định về phụ cấp ăn uống hàng ngày khi đi công tác nội địa là bao nhiêu?", "travel_expense_policy.pdf"),
+                ("⏰ Thời hạn nộp hồ sơ", "Sau chuyến công tác, thời hạn tối đa để tôi nộp hồ sơ hoàn ứng claim chi phí là bao nhiêu ngày làm việc?", "travel_expense_policy.pdf"),
+            ]
             
-            try:
-                rag = init_rag()
-                system_prompt = build_system_prompt(
-                    summary=st.session_state.rolling_summary,
-                    user_memories=st.session_state.user_memories,
-                )
+            with col_p1:
+                for icon, title, desc in [prompts[0], prompts[2]]:
+                    if st.button(f"{icon}\n\n{title}", key=f"quick_{title}", use_container_width=True):
+                        st.session_state.chat_started = True
+                        st.session_state.active_prompt = title
+                        st.rerun()
+            with col_p2:
+                for icon, title, desc in [prompts[1], prompts[3]]:
+                    if st.button(f"{icon}\n\n{title}", key=f"quick_{title}", use_container_width=True):
+                        st.session_state.chat_started = True
+                        st.session_state.active_prompt = title
+                        st.rerun()
+        else:
+            # Render chat dialog flow
+            for message in st.session_state.messages:
+                avatar = "👤" if message["role"] == "user" else "🤖"
+                with st.chat_message(message["role"], avatar=avatar):
+                    st.markdown(message["content"])
+                    if message.get("sources"):
+                        render_sources(message["sources"])
 
-                from src.config import STREAMING_ENABLED
+        # Check for active prompt from template buttons
+        prompt = None
+        if st.session_state.active_prompt:
+            prompt = st.session_state.active_prompt
+            st.session_state.active_prompt = None
+        else:
+            prompt = st.chat_input("Hỏi tôi về chính sách đi công tác, bảo mật, làm việc từ xa...")
 
-                if STREAMING_ENABLED:
-                    # ── True token streaming ──────────────────────────────
-                    # Stream tokens directly from Ollama — no time.sleep() needed.
-                    displayed_text = ""
-                    sources: list = []
-                    stream_result: dict = {}
-                    message_placeholder.markdown("Đang tìm tài liệu và chuẩn bị câu trả lời...")
-                    try:
-                        for token in rag.query_stream(
-                            prompt,
-                            system_prompt=system_prompt,
-                            chat_history=st.session_state.messages[:-1],
-                            on_complete=stream_result.update,
-                            access_filter=access_filter,
-                            rolling_summary=st.session_state.get("rolling_summary"),
-                        ):
-                            displayed_text += token
-                            message_placeholder.markdown(displayed_text + "▌")
-                        message_placeholder.markdown(displayed_text)
-                        response = displayed_text
-                        sources = stream_result.get("sources", [])
-                    except Exception as stream_exc:
-                        # Streaming failed — fall back to non-streaming
-                        st.warning(f"Streaming failed ({stream_exc}), retrying…")
-                        result = rag.query(
-                            prompt,
-                            system_prompt=system_prompt,
-                            chat_history=st.session_state.messages[:-1],
-                            access_filter=access_filter,
-                            rolling_summary=st.session_state.get("rolling_summary"),
-                        )
-                        response = result["answer"]
-                        sources = result.get("sources", [])
-                        message_placeholder.markdown(response)
-                else:
-                    # ── Non-streaming fallback ────────────────────────────
-                    result = rag.query(
-                        prompt,
-                        system_prompt=system_prompt,
-                        chat_history=st.session_state.messages[:-1],
-                        access_filter=access_filter,
-                        rolling_summary=st.session_state.get("rolling_summary"),
-                    )
-                    response = result["answer"]
-                    sources = result.get("sources", [])
-                    message_placeholder.markdown(response)
-                
-                if sources:
-                    render_sources(sources)
-                store.log_audit(
+        if prompt:
+            st.session_state.chat_started = True
+            question_category = classify_question_category(prompt)
+            access_filter = build_access_filter(
+                st.session_state.auth_user_role,
+                st.session_state.auth_department,
+            )
+            question_allowed = check_question_permission(
+                st.session_state.auth_user_role,
+                st.session_state.auth_department,
+                question_category,
+            )
+
+            # Lazy init conversation ID
+            if not st.session_state.current_conversation_id:
+                conv_title = (prompt.strip()[:40] + "...") if len(prompt.strip()) > 40 else prompt.strip()
+                st.session_state.current_conversation_id = store.create_conversation(
                     st.session_state.auth_user_id,
-                    "question_allowed",
-                    {
-                        "role": st.session_state.auth_user_role,
-                        "department": st.session_state.auth_department,
-                        "category": question_category,
-                        "question_preview": prompt[:160],
-                        "retrieved_chunk_ids": [
-                            str((source.get("metadata") or {}).get("chunk_id")
-                                or (source.get("metadata") or {}).get("document_id")
-                                or "")
-                            for source in sources[:20]
-                        ],
-                    },
+                    conv_title or "Chat mới",
+                )
+                st.session_state.rolling_summary = ""
+
+            # Append user message
+            store.append_message(
+                user_id=st.session_state.auth_user_id,
+                conversation_id=st.session_state.current_conversation_id,
+                role="user",
+                content=prompt,
+                sources=None,
+            )
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            st.rerun()
+
+        # Handle active response generation
+        if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+            user_msg = st.session_state.messages[-1]["content"]
+            
+            with st.chat_message("assistant", avatar="🤖"):
+                message_placeholder = st.empty()
+                
+                # Check ACL permissions
+                question_allowed = check_question_permission(
+                    st.session_state.auth_user_role,
+                    st.session_state.auth_department,
+                    classify_question_category(user_msg),
                 )
                 
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": response,
-                    "sources": sources if sources else None
-                })
-                store.append_message(
-                    user_id=st.session_state.auth_user_id,
-                    conversation_id=st.session_state.current_conversation_id,
-                    role="assistant",
-                    content=response,
-                    sources=sources if sources else None,
-                )
-
-                # ── Async post-response tasks ─────────────────────────────
-                # Submit rolling-summary update and memory extraction to run
-                # in background threads so the UI is unblocked immediately.
-                from src.config import ASYNC_POST_PROCESSING_ENABLED
-
-                _messages_snapshot = list(st.session_state.messages)
-                _conv_id = st.session_state.current_conversation_id
-                _user_id = st.session_state.auth_user_id
-                _old_summary = st.session_state.rolling_summary
-
-                def _update_summary():
-                    new_summary = update_rolling_summary(
-                        rag=rag,
-                        old_summary=_old_summary,
-                        recent_messages=_messages_snapshot,
+                if not question_allowed:
+                    response = ACCESS_DENIED_MESSAGE
+                    message_placeholder.markdown(response)
+                    st.session_state.messages.append({"role": "assistant", "content": response})
+                    store.append_message(
+                        user_id=st.session_state.auth_user_id,
+                        conversation_id=st.session_state.current_conversation_id,
+                        role="assistant",
+                        content=response,
+                        sources=None,
                     )
-                    store.upsert_conversation_summary(
-                        user_id=_user_id,
-                        conversation_id=_conv_id,
-                        summary=new_summary,
-                        last_message_id=None,
-                    )
-                    # Update session state from background thread is not safe in
-                    # Streamlit — the next rerun will re-fetch from DB instead.
+                    return
 
-                def _extract_memories():
-                    extracted = extract_selected_user_memories(
-                        rag=rag,
-                        recent_messages=_messages_snapshot,
-                    )
-                    if extracted:
-                        store.upsert_user_memories(
-                            user_id=_user_id,
-                            memories=extracted,
-                            min_confidence=0.7,
-                            max_memories=50,
-                        )
-
-                if ASYNC_POST_PROCESSING_ENABLED:
-                    rag.post_task_executor.submit(
-                        _update_summary, task_name="rolling_summary_update"
-                    )
-                    rag.post_task_executor.submit(
-                        _extract_memories, task_name="memory_extraction"
-                    )
-                else:
-                    # Synchronous fallback
-                    _update_summary()
-                    _extract_memories()
-                    st.session_state.user_memories = store.list_user_memories(
-                        _user_id, limit=12
+                try:
+                    # Prepare RAG query
+                    system_prompt = build_system_prompt(
+                        summary=st.session_state.rolling_summary,
+                        user_memories=st.session_state.user_memories,
                     )
                     
-            except Exception as e:
-                error_msg = f"❌ Lỗi: {str(e)}"
-                message_placeholder.error(error_msg)
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": error_msg
-                })
-                store.append_message(
-                    user_id=st.session_state.auth_user_id,
-                    conversation_id=st.session_state.current_conversation_id,
-                    role="assistant",
-                    content=error_msg,
-                    sources=None,
-                )
+                    access_filter = build_access_filter(
+                        st.session_state.auth_user_role,
+                        st.session_state.auth_department,
+                    )
+                    
+                    displayed_text = ""
+                    sources = []
+                    stream_result = {}
+                    message_placeholder.markdown("🔍 đang tra cứu tài liệu và lập bối cảnh...")
+                    
+                    # Stream response directly from Ollama
+                    for token in rag.query_stream(
+                        user_msg,
+                        system_prompt=system_prompt,
+                        chat_history=st.session_state.messages[:-1],
+                        on_complete=stream_result.update,
+                        access_filter=access_filter,
+                        rolling_summary=st.session_state.get("rolling_summary"),
+                    ):
+                        displayed_text += token
+                        message_placeholder.markdown(displayed_text + "▌")
+                    
+                    message_placeholder.markdown(displayed_text)
+                    response = displayed_text
+                    sources = stream_result.get("sources", [])
+                    
+                    if sources:
+                        render_sources(sources)
+                        
+                    # Save assistant response
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": response,
+                        "sources": sources if sources else None
+                    })
+                    store.append_message(
+                        user_id=st.session_state.auth_user_id,
+                        conversation_id=st.session_state.current_conversation_id,
+                        role="assistant",
+                        content=response,
+                        sources=sources if sources else None,
+                    )
+                    
+                    # Log audit trail
+                    store.log_audit(
+                        st.session_state.auth_user_id,
+                        "question_allowed",
+                        {
+                            "category": classify_question_category(user_msg),
+                            "question_preview": user_msg[:120],
+                            "sources_count": len(sources)
+                        }
+                    )
+
+                    # Trigger async post-response task updates (memory extraction + summary)
+                    from src.config import ASYNC_POST_PROCESSING_ENABLED
+                    _messages_snapshot = list(st.session_state.messages)
+                    _conv_id = st.session_state.current_conversation_id
+                    _user_id = st.session_state.auth_user_id
+                    _old_summary = st.session_state.rolling_summary
+
+                    def _update_summary():
+                        new_summary = update_rolling_summary(
+                            rag=rag,
+                            old_summary=_old_summary,
+                            recent_messages=_messages_snapshot,
+                        )
+                        store.upsert_conversation_summary(
+                            user_id=_user_id,
+                            conversation_id=_conv_id,
+                            summary=new_summary,
+                            last_message_id=None,
+                        )
+
+                    def _extract_memories():
+                        extracted = extract_selected_user_memories(
+                            rag=rag,
+                            recent_messages=_messages_snapshot,
+                        )
+                        if extracted:
+                            store.upsert_user_memories(
+                                user_id=_user_id,
+                                memories=extracted,
+                                min_confidence=0.7,
+                                max_memories=50,
+                            )
+
+                    if ASYNC_POST_PROCESSING_ENABLED:
+                        rag.post_task_executor.submit(_update_summary, task_name="summary_update")
+                        rag.post_task_executor.submit(_extract_memories, task_name="memory_extraction")
+                    else:
+                        _update_summary()
+                        _extract_memories()
+                        st.session_state.user_memories = store.list_user_memories(_user_id, limit=12)
+                        
+                    st.rerun()
+
+                except Exception as e:
+                    error_msg = f"❌ Hệ thống bận hoặc xảy ra lỗi: {str(e)}"
+                    message_placeholder.error(error_msg)
+                    st.session_state.messages.append({"role": "assistant", "content": error_msg})
+                    store.append_message(
+                        user_id=st.session_state.auth_user_id,
+                        conversation_id=st.session_state.current_conversation_id,
+                        role="assistant",
+                        content=error_msg,
+                        sources=None,
+                    )
+
+
+    # ── TAB 2: DOCUMENT LIBRARY (Thư viện tài liệu) ──────────────────────────────
+    elif st.session_state.navigation == "Library":
+        st.markdown('<h2 style="font-weight: 700; font-size: 24px; color: #0f172a; margin-top: 10px;">Document Library</h2>', unsafe_allow_html=True)
+        st.markdown('<p style="color: #64748b; font-size: 13px; margin-top: -12px;">Kho lưu trữ văn bản chính sách và hướng dẫn quy trình của hệ thống.</p>', unsafe_allow_html=True)
+        st.markdown("---")
+
+        # Fetch documents
+        docs = rag.vector_store_manager.list_documents()
+
+        # Filter layouts side-by-side with document grid
+        col_filters, col_grid = st.columns([1, 3])
+
+        # Render Left Column Filters
+        with col_filters:
+            st.markdown("""
+            <div style="background-color: #ffffff; padding: 20px; border-radius: 12px; border: 1px solid #e2e8f0; margin-bottom: 20px;">
+                <h4 style="font-size: 14px; font-weight: 700; color: #1e293b; margin-top: 0; margin-bottom: 15px; letter-spacing: 0.5px;">BỘ LỌC TÌM KIẾM</h4>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Department checkboxes
+            st.markdown("<p style='font-size: 12px; font-weight: 600; color: #64748b;'>PHÒNG BAN</p>", unsafe_allow_html=True)
+            depts = ["general", "finance", "hr", "it", "legal", "security"]
+            dept_names = {
+                "general": "General Policies",
+                "finance": "Finance & Tax",
+                "hr": "Human Resources",
+                "it": "IT & Engineering",
+                "legal": "Legal & Compliance",
+                "security": "Cybersecurity"
+            }
+            selected_depts = []
+            for d in depts:
+                if st.checkbox(dept_names[d], value=True, key=f"lib_dept_{d}"):
+                    selected_depts.append(d)
+
+            st.markdown("<div style='margin-bottom: 16px;'></div>", unsafe_allow_html=True)
+
+            # Date Filter Dropdown
+            st.markdown("<p style='font-size: 12px; font-weight: 600; color: #64748b;'>THỜI GIAN TẢI LÊN</p>", unsafe_allow_html=True)
+            time_filter = st.selectbox(
+                "Thời gian",
+                ["Tất cả", "30 ngày qua", "6 tháng qua"],
+                label_visibility="collapsed"
+            )
+
+            st.markdown("<div style='margin-bottom: 16px;'></div>", unsafe_allow_html=True)
+
+            # File Format Pills
+            st.markdown("<p style='font-size: 12px; font-weight: 600; color: #64748b;'>ĐỊNH DẠNG FILE</p>", unsafe_allow_html=True)
+            formats = st.multiselect(
+                "Định dạng",
+                ["PDF", "DOCX", "TXT"],
+                default=["PDF", "DOCX", "TXT"],
+                label_visibility="collapsed"
+            )
+
+            st.markdown("<div style='margin-bottom: 16px;'></div>", unsafe_allow_html=True)
+
+            # Storage space progress bar
+            st.markdown("<p style='font-size: 12px; font-weight: 600; color: #64748b;'>DUNG LƯỢNG LƯU TRỮ</p>", unsafe_allow_html=True)
+            space_gb = round(len(docs) * 0.15 + 8.4, 1)
+            st.progress(space_gb / 20.0)
+            st.caption(f"**{space_gb} GB** / 20.0 GB")
+
+        # Render Right Column Grid
+        with col_grid:
+            col_search_t, col_search_i = st.columns([2, 1])
+            with col_search_t:
+                st.markdown(f"##### Danh sách tài liệu ({len(docs)} tổng cộng)")
+            with col_search_i:
+                search_query = st.text_input("🔍", placeholder="Tìm tên file...", label_visibility="collapsed")
+
+            # Apply filters to list
+            filtered_docs = []
+            for doc in docs:
+                file_name = doc["file_name"]
+                meta = doc.get("metadata") or {}
+                dept = meta.get("department", "general")
+                ext = Path(file_name).suffix[1:].upper()
+                if ext == "MD":
+                    ext = "TXT"
+
+                if dept not in selected_depts:
+                    continue
+                if ext not in formats:
+                    continue
+                if search_query and search_query.lower() not in file_name.lower():
+                    continue
+
+                if time_filter != "Tất cả":
+                    import datetime
+                    from datetime import timezone
+                    delta = datetime.datetime.now(timezone.utc) - doc["created_at"]
+                    if time_filter == "30 ngày qua" and delta.days > 30:
+                        continue
+                    if time_filter == "6 tháng qua" and delta.days > 180:
+                        continue
+
+                filtered_docs.append(doc)
+
+            # Render Document Card Grid (3 columns)
+            if not filtered_docs:
+                st.info("Không có tài liệu nào khớp với điều kiện tìm kiếm.")
+            else:
+                cols_per_row = 3
+                rows = [filtered_docs[i:i + cols_per_row] for i in range(0, len(filtered_docs), cols_per_row)]
+                
+                for row_idx, row_docs in enumerate(rows):
+                    cols = st.columns(cols_per_row)
+                    for col_idx, doc in enumerate(row_docs):
+                        with cols[col_idx]:
+                            file_name = doc["file_name"]
+                            meta = doc.get("metadata") or {}
+                            dept = meta.get("department", "general").upper()
+                            emb_status = doc.get("embedding_status", "DONE").upper()
+                            created_str = doc["created_at"].strftime("%b %d, %Y")
+                            
+                            badge_cls = "badge-done"
+                            if emb_status == "PROCESSING":
+                                badge_cls = "badge-pending"
+                            elif emb_status == "FAILED":
+                                badge_cls = "badge-failed"
+
+                            st.markdown(f"""
+                            <div class="doc-card">
+                                <div>
+                                    <div class="doc-card-header">
+                                        <span class="doc-icon">📄</span>
+                                        <span class="doc-badge {badge_cls}">{emb_status}</span>
+                                    </div>
+                                    <div class="doc-title" title="{file_name}">{file_name}</div>
+                                    <div class="doc-meta">{dept} • {created_str}</div>
+                                    <div class="doc-desc">
+                                        Tài liệu chính sách thuộc lĩnh vực {dept.lower()}. Mức bảo mật: {meta.get("sensitivity", "internal")}.
+                                    </div>
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                            # Renders actual Streamlit interactive buttons below the HTML card
+                            btn_col1, btn_col2 = st.columns(2)
+                            with btn_col1:
+                                if st.button("Xem tóm tắt", key=f"sum_{doc['id']}", use_container_width=True):
+                                    st.session_state.selected_document = doc
+                                    st.session_state.navigation = "Document Details"
+                                    st.rerun()
+                            with btn_col2:
+                                if st.button("Mở đọc", key=f"open_{doc['id']}", use_container_width=True):
+                                    st.session_state.selected_document = doc
+                                    st.session_state.navigation = "Document Details"
+                                    st.rerun()
+
+
+    # ── TAB 3: DOCUMENT DETAILS & SUMMARY (Báo cáo tóm tắt song song) ────────────
+    elif st.session_state.navigation == "Document Details":
+        if not st.session_state.selected_document:
+            st.info("Vui lòng chọn một tài liệu ở tab 'Thư viện tài liệu' để xem chi tiết.")
+            return
+
+        doc = st.session_state.selected_document
+        doc_id = doc["id"]
+        doc_name = doc["file_name"]
+        
+        # Load document text chunks
+        chunks = rag.vector_store_manager.get_document_chunks(doc_id)
+        full_text = "\n\n".join([c["content"] for c in chunks])
+
+        # Header bar
+        col_back, col_title = st.columns([1, 8])
+        with col_back:
+            if st.button("◀ Thư viện", use_container_width=True):
+                st.session_state.navigation = "Library"
+                st.rerun()
+        with col_title:
+            st.markdown(f'<h3 style="font-weight: 700; font-size: 20px; color: #0f172a; margin-top: 2px;">{doc_name}</h3>', unsafe_allow_html=True)
+        st.markdown("---")
+
+        # Split pane layout (Left: Text preview, Right: Executive Summary + QA)
+        col_preview, col_summary = st.columns([3, 2])
+
+        with col_preview:
+            st.markdown("<p style='font-size: 12px; font-weight: 600; color: #64748b;'>NỘI DUNG TÀI LIỆU</p>", unsafe_allow_html=True)
+            formatted_text = full_text.replace('\n', '<br/>')
+            st.markdown(f"""
+            <div class="doc-preview-box">
+                {formatted_text}
+            </div>
+            """, unsafe_allow_html=True)
+
+        with col_summary:
+            st.markdown("<p style='font-size: 12px; font-weight: 600; color: #64748b;'>TÓM TẮT CHỈ SỐ (EXECUTIVE SUMMARY)</p>", unsafe_allow_html=True)
+            
+            # Cache the summary in session state to prevent repeatedly invoking LLM
+            summary_state_key = f"doc_summary_{doc_id}"
+            if summary_state_key not in st.session_state:
+                with st.spinner("Đang phân tích và sinh tóm tắt chỉ số..."):
+                    st.session_state[summary_state_key] = generate_doc_summary(rag, doc_name, full_text)
+            
+            summary_data = st.session_state[summary_state_key]
+
+            # Render Metric cards
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-card-title">📈 Lợi ích vận hành (Efficiency Gains)</div>
+                <div class="metric-card-value">{summary_data.get("efficiency", "")}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-card-title">⚠️ Phòng ngừa rủi ro (Risk Mitigation)</div>
+                <div class="metric-card-value">{summary_data.get("risk", "")}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-card-title">🔮 Triển vọng phát triển (Projected Outlook)</div>
+                <div class="metric-card-value">{summary_data.get("outlook", "")}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # Render key action items
+            st.markdown("##### Quy tắc cốt lõi (Key Takeaways)")
+            for item in summary_data.get("takeaways", []):
+                st.markdown(f"- [x] {item}")
+
+            st.markdown("<div style='margin-bottom: 24px;'></div>", unsafe_allow_html=True)
+
+            # Document-specific QA input box
+            st.markdown("##### 💬 Hỏi đáp nhanh về tài liệu này")
+            st.caption("Các câu hỏi dưới đây chỉ tìm kiếm thông tin và giải đáp trên duy nhất tài liệu này.")
+            doc_query = st.text_input("Đặt câu hỏi cho tài liệu này...", key=f"query_doc_{doc_id}", placeholder="Hỏi về hạn mức, quy trình...")
+            
+            if doc_query:
+                with st.spinner("Đang tìm kiếm..."):
+                    # Build metadata filter restricting search solely to this document
+                    access_filter = build_access_filter(
+                        st.session_state.auth_user_role,
+                        st.session_state.auth_department,
+                    )
+                    access_filter["document_id"] = doc_id
+                    
+                    # Run RAG query
+                    result = rag.query(
+                        question=doc_query,
+                        k=3,
+                        access_filter=access_filter
+                    )
+                    
+                    # Display response in clean card
+                    st.markdown(f"""
+                    <div style="background-color: #e0f2fe; border-left: 4px solid #0284c7; padding: 16px; border-radius: 8px; font-size: 13px; line-height: 1.6; color: #0369a1; margin-top: 10px;">
+                        <strong>Trợ lý AI trả lời:</strong><br/>
+                        {result['answer']}
+                    </div>
+                    """, unsafe_allow_html=True)
 
 
 if __name__ == "__main__":

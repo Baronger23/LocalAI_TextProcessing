@@ -503,3 +503,76 @@ class ChatStore:
             return upserted
 
         return self._run_with_retry(_op)
+
+    def get_audit_logs(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        event_type: Optional[str] = None,
+        email_query: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Truy vấn nhật ký hệ thống kèm bộ lọc và phân trang. Trả về (danh sách log, tổng số lượng bản ghi khớp lọc)."""
+        conditions = []
+        params = []
+
+        if event_type:
+            conditions.append("a.event = %s")
+            params.append(event_type)
+
+        if email_query:
+            conditions.append("u.email ILIKE %s")
+            params.append(f"%{email_query.strip()}%")
+
+        if start_date:
+            conditions.append("a.created_at >= %s::timestamptz")
+            params.append(start_date)
+
+        if end_date:
+            conditions.append("a.created_at <= %s::timestamptz + interval '1 day'")
+            params.append(end_date)
+
+        where_clause = " AND ".join(conditions)
+        if where_clause:
+            where_clause = "WHERE " + where_clause
+        else:
+            where_clause = ""
+
+        def _op(conn: psycopg.Connection) -> tuple[list[dict[str, Any]], int]:
+            # Query total count
+            count_query = f"""
+                SELECT COUNT(*) as total
+                FROM audit_logs a
+                LEFT JOIN users u ON u.id = a.user_id
+                {where_clause}
+            """
+            count_row = conn.execute(count_query, params).fetchone()
+            total_count = count_row["total"] if count_row else 0
+
+            # Query rows
+            select_query = f"""
+                SELECT 
+                    a.id,
+                    a.event,
+                    a.details,
+                    a.created_at,
+                    u.email as user_email,
+                    u.role as user_role
+                FROM audit_logs a
+                LEFT JOIN users u ON u.id = a.user_id
+                {where_clause}
+                ORDER BY a.created_at DESC, a.id DESC
+                LIMIT %s OFFSET %s
+            """
+            rows = conn.execute(select_query, params + [limit, offset]).fetchall()
+            
+            logs = []
+            for row in rows:
+                r = dict(row)
+                r["id"] = str(r["id"])
+                logs.append(r)
+            return logs, total_count
+
+        return self._run_with_retry(_op)
+

@@ -16,7 +16,12 @@ from src.storage.chat_store import ChatStore
 
 @pytest.fixture
 def store():
-    return ChatStore(db_url=POSTGRES_CONNECTION_STRING)
+    store_obj = ChatStore(db_url=POSTGRES_CONNECTION_STRING)
+    emails = ["a@example.com", "b@example.com", "summary@example.com", "memory@example.com"]
+    def _cleanup(conn):
+        conn.execute("DELETE FROM users WHERE email = ANY(%s)", (emails,))
+    store_obj._run_with_retry(_cleanup)
+    return store_obj
 
 
 def _create_user(store: ChatStore, email: str, password: str = "password123") -> int:

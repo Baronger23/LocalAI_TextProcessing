@@ -69,7 +69,7 @@ class TestAdaptiveTopK:
 
         rag.query("Phân tích các công trình lý luận về vai trò")
 
-        assert rag.vector_store_manager.similarity_search.call_args_list[0].kwargs["k"] == max(35, BROAD_QUERY_TOP_K + 20)
+        assert rag.vector_store_manager.similarity_search.call_args_list[0].kwargs["k"] == max(rag.mmr_fetch_k if rag.mmr_enabled else 35, BROAD_QUERY_TOP_K + 20)
 
     def test_focused_query_uses_default_top_k_when_unspecified(self):
         rag = _mock_pipeline()
@@ -77,14 +77,14 @@ class TestAdaptiveTopK:
         rag.query("ASEAN thành lập năm nào?")
 
         rag.vector_store_manager.similarity_search.assert_called_once()
-        assert rag.vector_store_manager.similarity_search.call_args.kwargs["k"] == max(35, DEFAULT_TOP_K + 20)
+        assert rag.vector_store_manager.similarity_search.call_args.kwargs["k"] == max(rag.mmr_fetch_k if rag.mmr_enabled else 35, DEFAULT_TOP_K + 20)
 
     def test_explicit_top_k_is_preserved(self):
         rag = _mock_pipeline()
 
         rag.query("Phân tích các công trình lý luận về vai trò", k=5)
 
-        assert rag.vector_store_manager.similarity_search.call_args_list[0].kwargs["k"] == max(35, 5 + 20)
+        assert rag.vector_store_manager.similarity_search.call_args_list[0].kwargs["k"] == max(rag.mmr_fetch_k if rag.mmr_enabled else 35, 5 + 20)
 
 
 

@@ -322,44 +322,51 @@ class VectorStoreManager:
         document_alias: str = "d",
     ) -> tuple[str, List[Any]]:
         """Build SQL predicates for the RBAC metadata filter."""
-        if not filter or filter.get("admin"):
+        if not filter:
             return "", []
 
         clauses: List[str] = []
         params: List[Any] = []
-        metadata_expr = (
-            f"COALESCE({chunk_alias}.metadata->>%s, {document_alias}.metadata->>%s)"
-        )
 
-        if filter.get("require_verified"):
-            clauses.append(
-                f"COALESCE(({chunk_alias}.metadata->>'metadata_verified')::boolean, "
-                f"({document_alias}.metadata->>'metadata_verified')::boolean, FALSE) = TRUE"
+        document_id = filter.get("document_id")
+        if document_id:
+            clauses.append(f"{chunk_alias}.document_id = %s")
+            params.append(document_id)
+
+        if not filter.get("admin"):
+            metadata_expr = (
+                f"COALESCE({chunk_alias}.metadata->>%s, {document_alias}.metadata->>%s)"
             )
 
-        departments = list(filter.get("departments") or [])
-        if departments:
-            clauses.append(f"{metadata_expr} = ANY(%s)")
-            params.extend(["department", "department", departments])
+            if filter.get("require_verified"):
+                clauses.append(
+                    f"COALESCE(({chunk_alias}.metadata->>'metadata_verified')::boolean, "
+                    f"({document_alias}.metadata->>'metadata_verified')::boolean, FALSE) = TRUE"
+                )
 
-        sensitivities = list(filter.get("sensitivities") or [])
-        if sensitivities:
-            clauses.append(f"{metadata_expr} = ANY(%s)")
-            params.extend(["sensitivity", "sensitivity", sensitivities])
+            departments = list(filter.get("departments") or [])
+            if departments:
+                clauses.append(f"{metadata_expr} = ANY(%s)")
+                params.extend(["department", "department", departments])
 
-        role = str(filter.get("role") or "").strip()
-        if role:
-            allowed_roles_expr = (
-                f"COALESCE({chunk_alias}.metadata->'allowed_roles', "
-                f"{document_alias}.metadata->'allowed_roles')"
-            )
-            clauses.append(
-                f"({allowed_roles_expr} IS NULL OR CASE "
-                f"WHEN jsonb_typeof({allowed_roles_expr}) = 'array' THEN "
-                f"EXISTS (SELECT 1 FROM jsonb_array_elements_text({allowed_roles_expr}) AS allowed_role WHERE allowed_role = %s) "
-                f"ELSE TRUE END)"
-            )
-            params.append(role)
+            sensitivities = list(filter.get("sensitivities") or [])
+            if sensitivities:
+                clauses.append(f"{metadata_expr} = ANY(%s)")
+                params.extend(["sensitivity", "sensitivity", sensitivities])
+
+            role = str(filter.get("role") or "").strip()
+            if role:
+                allowed_roles_expr = (
+                    f"COALESCE({chunk_alias}.metadata->'allowed_roles', "
+                    f"{document_alias}.metadata->'allowed_roles')"
+                )
+                clauses.append(
+                    f"({allowed_roles_expr} IS NULL OR CASE "
+                    f"WHEN jsonb_typeof({allowed_roles_expr}) = 'array' THEN "
+                    f"EXISTS (SELECT 1 FROM jsonb_array_elements_text({allowed_roles_expr}) AS allowed_role WHERE allowed_role = %s) "
+                    f"ELSE TRUE END)"
+                )
+                params.append(role)
 
         if not clauses:
             return "", []
@@ -584,7 +591,7 @@ class VectorStoreManager:
         stop_words = {
             "neu", "toi", "thi", "ai", "se", "bang", "cho", "cua", "da", "duoc", 
             "co", "khong", "la", "va", "hoac", "nhung", "vi", "nen", "voi", "tai", 
-            "trong", "o", "nay", "do", "kia", "ay", "nao", "gi", "su", "viec", 
+            "trong", "o", "nay", "do", "kia", "ay", "nao", "gi", "su", 
             "cac", "nhung", "mot", "hai", "bon", "tam", "chin", "muoi", "tren", 
             "duoi", "khi", "luc", "noi", "cho", "nguoi", "hay", "den", "de", 
             "theo", "nhu", "xem", "the",
@@ -592,12 +599,9 @@ class VectorStoreManager:
             "or", "if", "then", "who", "will", "be", "is", "are", "was", "were", 
             "you", "i", "he", "she", "they", "we", "it", "my", "your", "his", "her",
             "him", "them", "us", "our", "their", "this", "that", "these", "those",
-            "thoi", "gian", "cach", "thuc", "ra", "doi", "lam", "viec", "tai", "cong", "ty",
-            # New stop words added
-            "moi", "ngay", "tuan", "thang", "nam", "quy", "dieu", "khoan", "muc", "chuong",
-            "nhat", "truoc", "sau", "lien", "quan",
-            # Turn 4 query noise words
-            "cap", "di", "tac", "gio", "chuyen"
+            "thoi", "gian", "cach", "thuc", "ra", "doi", "ty",
+            # Refined stop words
+            "moi", "quy", "nhat", "lien", "quan"
         }
 
         def strip_accents(text):
@@ -779,6 +783,7 @@ class VectorStoreManager:
             merged_metadata = {
                 **document_metadata,
                 **metadata,
+                "chunk_id": str(row["chunk_id"]),
                 "source_key": row["source_key"],
                 "file_name": row["file_name"],
                 "file_path": row["file_path"],
@@ -1117,3 +1122,32 @@ class VectorStoreManager:
 
         collection = self.vector_store._collection
         return f"chroma:{collection.count()}"
+
+    def list_documents(self) -> List[Dict[str, Any]]:
+        """List all documents from the database."""
+        if self.backend != "postgres":
+            return []
+        self._init_postgres_schema()
+        with self._pool_connection() as conn:
+            rows = conn.execute(
+                f"SELECT id, source_key, file_name, file_path, status, embedding_status, metadata, created_at, updated_at "
+                f"FROM {self.postgres_schema}.documents "
+                f"ORDER BY created_at DESC"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_document_chunks(self, document_id: str) -> List[Dict[str, Any]]:
+        """Get all chunks for a document."""
+        if self.backend != "postgres":
+            return []
+        self._init_postgres_schema()
+        with self._pool_connection() as conn:
+            rows = conn.execute(
+                f"SELECT id, chunk_index, content, metadata, page_number "
+                f"FROM {self.postgres_schema}.{self.postgres_table_name} "
+                f"WHERE document_id = %s "
+                f"ORDER BY chunk_index ASC",
+                (document_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
