@@ -130,6 +130,7 @@ class LLMManager:
         # Queue tracking (FIFO discipline enforced by Semaphore + lock ordering).
         self._queue_lock = threading.Lock()
         self._queue_count: int = 0  # requests waiting for the semaphore
+        self._active_count: int = 0  # requests currently holding the semaphore
 
     # ------------------------------------------------------------------
     # LLM instance (lazy init)
@@ -175,6 +176,8 @@ class LLMManager:
 
         with self._queue_lock:
             self._queue_count -= 1
+            if acquired:
+                self._active_count += 1
 
         if not acquired:
             raise LLMTimeoutError(
@@ -186,7 +189,20 @@ class LLMManager:
 
     def _release(self) -> None:
         """Release the semaphore slot."""
+        with self._queue_lock:
+            if self._active_count > 0:
+                self._active_count -= 1
         self._semaphore.release()
+
+    def get_runtime_status(self) -> Dict[str, int]:
+        """Return the current semaphore and queue state for monitoring."""
+        with self._queue_lock:
+            return {
+                "active_calls": self._active_count,
+                "queue_waiting": self._queue_count,
+                "max_concurrent_calls": self.max_concurrent_calls,
+                "max_queue_size": self.max_queue_size,
+            }
 
     # ------------------------------------------------------------------
     # Public API

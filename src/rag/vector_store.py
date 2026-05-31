@@ -1125,29 +1125,97 @@ class VectorStoreManager:
 
     def list_documents(self) -> List[Dict[str, Any]]:
         """List all documents from the database."""
-        if self.backend != "postgres":
+        if self.backend == "postgres":
+            self._init_postgres_schema()
+            with self._pool_connection() as conn:
+                rows = conn.execute(
+                    f"SELECT id, source_key, file_name, file_path, status, embedding_status, metadata, created_at, updated_at "
+                    f"FROM {self.postgres_schema}.documents "
+                    f"ORDER BY created_at DESC"
+                ).fetchall()
+            return [dict(row) for row in rows]
+
+        # Chroma backend: read metadata from Chroma collection and map to expected shape
+        try:
+            collection = self.vector_store._collection
+            # Reconstruct expected list from Chroma
+            data = collection.get(include=['metadatas', 'ids', 'documents'])
+            metadatas = data.get('metadatas') or []
+            ids = data.get('ids') or []
+            docs_text = data.get('documents') or []
+            result: List[Dict[str, Any]] = []
+            for idx, doc_id in enumerate(ids):
+                meta = metadatas[idx] if idx < len(metadatas) else {}
+                file_name = meta.get('file_name') or meta.get('source') or f'doc-{doc_id}'
+                file_path = meta.get('file_path')
+                status = meta.get('status', 'active')
+                embedding_status = meta.get('embedding_status', 'done')
+                created_at = meta.get('created_at')
+                updated_at = meta.get('updated_at')
+                try:
+                    # normalize created/updated timestamps when stored as ISO strings
+                    import dateutil.parser as _dp
+
+                    if isinstance(created_at, str):
+                        created_at = _dp.parse(created_at)
+                    if isinstance(updated_at, str):
+                        updated_at = _dp.parse(updated_at)
+                except Exception:
+                    pass
+                result.append(
+                    {
+                        'id': doc_id,
+                        'source_key': meta.get('source_key') or doc_id,
+                        'file_name': file_name,
+                        'file_path': file_path,
+                        'status': status,
+                        'embedding_status': embedding_status,
+                        'metadata': meta or {},
+                        'created_at': created_at,
+                        'updated_at': updated_at,
+                    }
+                )
+            # Order by created_at descending when available
+            result.sort(key=lambda r: r.get('created_at') or 0, reverse=True)
+            return result
+        except Exception:
+            # Fallback: return empty list if Chroma not ready or unsupported
             return []
-        self._init_postgres_schema()
-        with self._pool_connection() as conn:
-            rows = conn.execute(
-                f"SELECT id, source_key, file_name, file_path, status, embedding_status, metadata, created_at, updated_at "
-                f"FROM {self.postgres_schema}.documents "
-                f"ORDER BY created_at DESC"
-            ).fetchall()
-        return [dict(row) for row in rows]
 
     def get_document_chunks(self, document_id: str) -> List[Dict[str, Any]]:
         """Get all chunks for a document."""
-        if self.backend != "postgres":
+        if self.backend == "postgres":
+            self._init_postgres_schema()
+            with self._pool_connection() as conn:
+                rows = conn.execute(
+                    f"SELECT id, chunk_index, content, metadata, page_number "
+                    f"FROM {self.postgres_schema}.{self.postgres_table_name} "
+                    f"WHERE document_id = %s "
+                    f"ORDER BY chunk_index ASC",
+                    (document_id,),
+                ).fetchall()
+            return [dict(row) for row in rows]
+        # Chroma backend: fetch documents by id from the Chroma collection
+        try:
+            collection = self.vector_store._collection
+            resp = collection.get(ids=[document_id], include=['metadatas', 'documents', 'ids'])
+            if not resp or not resp.get('ids'):
+                return []
+            metadatas = resp.get('metadatas', [{}])
+            docs_text = resp.get('documents', [''])
+            # Chroma stores the whole document text per id; split heuristically into chunks if needed
+            text = docs_text[0] if docs_text else ''
+            metadata = metadatas[0] if metadatas else {}
+            # Fallback: return the whole document as a single chunk
+            return [
+                {
+                    'id': document_id,
+                    'chunk_index': 0,
+                    'content': text,
+                    'metadata': metadata or {},
+                    'page_number': metadata.get('page_start') or None,
+                }
+            ]
+        except Exception:
             return []
-        self._init_postgres_schema()
-        with self._pool_connection() as conn:
-            rows = conn.execute(
-                f"SELECT id, chunk_index, content, metadata, page_number "
-                f"FROM {self.postgres_schema}.{self.postgres_table_name} "
-                f"WHERE document_id = %s "
-                f"ORDER BY chunk_index ASC",
-                (document_id,),
-            ).fetchall()
-        return [dict(row) for row in rows]
 

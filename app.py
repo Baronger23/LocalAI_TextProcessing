@@ -3,6 +3,7 @@ Streamlit Chat Interface - Premium Corporate RAG UI Redesign
 """
 import logging
 import streamlit as st
+import pandas as pd
 from pathlib import Path
 import sys
 import time
@@ -22,6 +23,17 @@ logger = logging.getLogger(__name__)
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.rag import RAGPipeline
+from src.admin_analytics import (
+    build_activity_snapshot,
+    build_donut_html,
+    build_excel_bytes,
+    build_pdf_bytes,
+    build_resource_status,
+    build_warning_banner,
+    fetch_audit_logs_in_range,
+    normalize_period,
+)
+from src.admin_rbac import render_rbac_admin_page
 from src.security import (
     ACCESS_DENIED_MESSAGE,
     build_access_filter,
@@ -753,6 +765,9 @@ def main():
     if "auth_department_id" not in st.session_state:
         st.session_state.auth_department_id = None
 
+    if "auth_session_version" not in st.session_state:
+        st.session_state.auth_session_version = None
+
     if "current_conversation_id" not in st.session_state:
         st.session_state.current_conversation_id = None
 
@@ -799,11 +814,13 @@ def main():
                 if st.button("Đăng nhập", use_container_width=True, type="primary"):
                     user = store.authenticate_user(login_email, login_password)
                     if user:
+                        security_state = store.get_user_security_state(user["id"])
                         st.session_state.auth_user_id = user["id"]
                         st.session_state.auth_user_email = user["email"]
                         st.session_state.auth_user_role = normalize_role(user.get("role"))
                         st.session_state.auth_department = normalize_department(user.get("department"))
                         st.session_state.auth_department_id = user.get("department_id")
+                        st.session_state.auth_session_version = (security_state or {}).get("session_version", user.get("session_version", 1))
                         st.session_state.messages = []
                         st.session_state.current_conversation_id = None
                         st.session_state.chat_started = False
@@ -829,6 +846,7 @@ def main():
                             st.session_state.auth_user_role = "Employee"
                             st.session_state.auth_department = "general"
                             st.session_state.auth_department_id = None
+                            st.session_state.auth_session_version = 1
                             st.session_state.messages = []
                             st.session_state.current_conversation_id = None
                             st.session_state.chat_started = False
@@ -842,6 +860,28 @@ def main():
         return
 
     # ── DARK PREMIUM SIDEBAR (User logged in) ──────────────────────────────────
+    security_state = None
+    try:
+        security_state = store.get_user_security_state(st.session_state.auth_user_id)
+    except Exception:
+        security_state = None
+    if security_state:
+        if not security_state.get("is_active") or security_state.get("session_version") != st.session_state.auth_session_version:
+            store.log_audit(st.session_state.auth_user_id, "session_invalidated", {"reason": "force_logout_or_disable"})
+            st.session_state.auth_user_id = None
+            st.session_state.auth_user_email = ""
+            st.session_state.auth_user_role = "Employee"
+            st.session_state.auth_department = "general"
+            st.session_state.auth_department_id = None
+            st.session_state.auth_session_version = None
+            st.session_state.current_conversation_id = None
+            st.session_state.messages = []
+            st.session_state.chat_started = False
+            st.session_state.rolling_summary = ""
+            st.session_state.user_memories = []
+            st.session_state.navigation = "Chat"
+            st.rerun()
+
     with st.sidebar:
         # App Logo Title
         st.markdown("""
@@ -867,9 +907,13 @@ def main():
         # Navigation vertical tabs (simulated via custom styled radio)
         nav_options = {
             "💬 Trợ lý hỏi đáp": "Chat",
-            "📂 Thư viện tài liệu": "Library",
             "📄 Chi tiết tài liệu": "Document Details"
         }
+        if st.session_state.auth_user_role == "Admin":
+            nav_options["⚙️ Quản trị RBAC"] = "RBAC Admin"
+        if st.session_state.auth_user_role in {"Admin", "Manager"}:
+            nav_options["📊 Dashboard AI"] = "AI Dashboard"
+            nav_options["📈 Báo cáo AI"] = "AI Report"
         if st.session_state.auth_user_role == "Admin":
             nav_options["🛡️ Nhật ký hệ thống"] = "Audit Log"
         
@@ -1185,6 +1229,13 @@ def main():
                         "content": response,
                         "sources": sources if sources else None
                     })
+                    timing = stream_result.get("timing", {}) if isinstance(stream_result, dict) else {}
+                    source_names = []
+                    for source in sources:
+                        metadata = source.get("metadata", {}) if isinstance(source, dict) else {}
+                        source_name = metadata.get("file_name") or metadata.get("source") or metadata.get("name")
+                        if source_name:
+                            source_names.append(str(source_name))
                     store.append_message(
                         user_id=st.session_state.auth_user_id,
                         conversation_id=st.session_state.current_conversation_id,
@@ -1199,8 +1250,14 @@ def main():
                         "question_allowed",
                         {
                             "category": classify_question_category(user_msg),
+                            "department": st.session_state.auth_department,
+                            "role": st.session_state.auth_user_role,
+                            "question_text": user_msg[:500],
                             "question_preview": user_msg[:120],
-                            "sources_count": len(sources)
+                            "sources_count": len(sources),
+                            "sources": source_names,
+                            "latency_ms": timing.get("total_ms", 0.0),
+                            "ttft_ms": timing.get("ttft_ms", 0.0),
                         }
                     )
 
@@ -1414,11 +1471,26 @@ def main():
 
     # ── TAB 3: DOCUMENT DETAILS & SUMMARY (Báo cáo tóm tắt song song) ────────────
     elif st.session_state.navigation == "Document Details":
-        if not st.session_state.selected_document:
-            st.info("Vui lòng chọn một tài liệu ở tab 'Thư viện tài liệu' để xem chi tiết.")
+        docs = rag.vector_store_manager.list_documents()
+        if not docs:
+            st.info("Chưa có tài liệu nào trong hệ thống.")
             return
 
-        doc = st.session_state.selected_document
+        if st.session_state.selected_document:
+            selected_doc_id = st.session_state.selected_document.get("id")
+        else:
+            selected_doc_id = None
+
+        selected_doc_label = st.selectbox(
+            "Chọn tài liệu",
+            options=[doc["id"] for doc in docs],
+            format_func=lambda doc_id: next((doc["file_name"] for doc in docs if doc["id"] == doc_id), doc_id),
+            index=next((idx for idx, doc in enumerate(docs) if doc["id"] == selected_doc_id), 0),
+            key="document_details_selector",
+        )
+        doc = next(doc for doc in docs if doc["id"] == selected_doc_label)
+        st.session_state.selected_document = doc
+
         doc_id = doc["id"]
         doc_name = doc["file_name"]
         
@@ -1429,8 +1501,8 @@ def main():
         # Header bar
         col_back, col_title = st.columns([1, 8])
         with col_back:
-            if st.button("◀ Thư viện", use_container_width=True):
-                st.session_state.navigation = "Library"
+            if st.button("◀ Trợ lý", use_container_width=True):
+                st.session_state.navigation = "Chat"
                 st.rerun()
         with col_title:
             st.markdown(f'<h3 style="font-weight: 700; font-size: 20px; color: #0f172a; margin-top: 2px;">{doc_name}</h3>', unsafe_allow_html=True)
@@ -1511,7 +1583,405 @@ def main():
                     </div>
                     """, unsafe_allow_html=True)
 
-    # ── TAB 4: SYSTEM AUDIT LOGS (Nhật ký hệ thống) ─────────────────────────────
+    # ── TAB 4: AI DASHBOARD ────────────────────────────────────────────────────
+    elif st.session_state.navigation == "AI Dashboard":
+        if st.session_state.auth_user_role not in {"Admin", "Manager"}:
+            st.error("Bạn không có quyền truy cập trang này.")
+            return
+
+        st.markdown('<h2 style="font-weight: 700; font-size: 24px; color: #0f172a; margin-top: 10px;">📊 Dashboard theo dõi hệ thống AI</h2>', unsafe_allow_html=True)
+        st.markdown('<p style="color: #64748b; font-size: 13px; margin-top: -12px;">KPI cards, biểu đồ truy vấn, cảnh báo realtime và trạng thái tài nguyên.</p>', unsafe_allow_html=True)
+        st.markdown("---")
+        st.components.v1.html("<meta http-equiv='refresh' content='15'>", height=0)
+
+        period_label_map = {
+            "Hôm nay": "today",
+            "7 ngày": "7d",
+            "30 ngày": "30d",
+            "Tùy chỉnh": "custom",
+        }
+        period_choice = st.radio("Khoảng thời gian", list(period_label_map.keys()), horizontal=True)
+
+        custom_start = None
+        custom_end = None
+        if period_choice == "Tùy chỉnh":
+            col_start, col_end = st.columns(2)
+            with col_start:
+                custom_start = st.date_input(
+                    "Từ ngày",
+                    value=datetime.date.today() - datetime.timedelta(days=7),
+                )
+            with col_end:
+                custom_end = st.date_input("Đến ngày", value=datetime.date.today())
+
+        dept_labels = {
+            "all": "Tất cả phòng ban",
+            "general": "General",
+            "finance": "Finance",
+            "hr": "HR",
+            "it": "IT",
+            "legal": "Legal",
+            "security": "Security",
+        }
+
+        if st.session_state.auth_user_role == "Manager":
+            selected_department = st.session_state.auth_department
+            st.info(f"Bộ lọc phòng ban đang cố định theo quyền Manager: {dept_labels.get(selected_department, selected_department)}")
+        else:
+            selected_department = st.selectbox(
+                "Phòng ban",
+                ["all", "general", "finance", "hr", "it", "legal", "security"],
+                format_func=lambda value: dept_labels.get(value, value),
+            )
+
+        try:
+            start_dt, end_dt, period_display = normalize_period(
+                period_label_map[period_choice],
+                custom_start=custom_start,
+                custom_end=custom_end,
+            )
+        except ValueError as exc:
+            st.error(str(exc))
+            return
+
+        try:
+            question_logs = fetch_audit_logs_in_range(
+                store,
+                start=start_dt,
+                end=end_dt,
+                event_type="question_allowed",
+            )
+        except Exception as exc:
+            st.error(f"Không thể đọc query log: {exc}")
+            return
+
+        try:
+            indexed_documents = rag.get_stats().get("vector_store", {}).get("count", 0)
+        except Exception:
+            indexed_documents = 0
+
+        try:
+            runtime_status = rag.llm_manager.get_runtime_status()
+        except Exception:
+            runtime_status = {"queue_waiting": 0, "max_queue_size": 0, "active_calls": 0}
+
+        snapshot = build_activity_snapshot(
+            question_logs,
+            selected_department=selected_department,
+            indexed_documents=indexed_documents,
+            include_user_breakdown=False,
+        )
+        seven_day_question_df = snapshot["question_df"]
+        try:
+            seven_day_start, seven_day_end, _ = normalize_period("7d")
+            seven_day_logs = fetch_audit_logs_in_range(
+                store,
+                start=seven_day_start,
+                end=seven_day_end,
+                event_type="question_allowed",
+            )
+            seven_day_snapshot = build_activity_snapshot(
+                seven_day_logs,
+                selected_department=selected_department,
+                indexed_documents=indexed_documents,
+                include_user_breakdown=False,
+            )
+            seven_day_question_df = seven_day_snapshot["question_df"]
+        except Exception:
+            pass
+        resource_status = build_resource_status(
+            queue_size=runtime_status.get("queue_waiting", 0),
+            queue_max=runtime_status.get("max_queue_size", 0),
+            base_dir=Path(__file__).parent,
+        )
+
+        if resource_status["warnings"]:
+            st.markdown(build_warning_banner(resource_status["warnings"]), unsafe_allow_html=True)
+            st.markdown("<div style='margin-bottom: 18px;'></div>", unsafe_allow_html=True)
+
+        kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
+        with kpi_col1:
+            st.markdown(f"""
+            <div style="background:#ffffff;padding:16px;border:1px solid #e2e8f0;border-radius:14px;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+                <div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;">Tổng truy vấn ({period_display})</div>
+                <div style="font-size:28px;font-weight:800;color:#0f172a;margin-top:6px;">{snapshot['summary']['total_queries']:,}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with kpi_col2:
+            st.markdown(f"""
+            <div style="background:#ffffff;padding:16px;border:1px solid #e2e8f0;border-radius:14px;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+                <div style="font-size:11px;font-weight:700;color:#0f766e;text-transform:uppercase;letter-spacing:0.5px;">Latency TB</div>
+                <div style="font-size:28px;font-weight:800;color:#0f766e;margin-top:6px;">{snapshot['summary']['avg_latency_ms']:.1f} ms</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with kpi_col3:
+            st.markdown(f"""
+            <div style="background:#ffffff;padding:16px;border:1px solid #e2e8f0;border-radius:14px;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+                <div style="font-size:11px;font-weight:700;color:#2563eb;text-transform:uppercase;letter-spacing:0.5px;">Tỷ lệ có nguồn</div>
+                <div style="font-size:28px;font-weight:800;color:#2563eb;margin-top:6px;">{snapshot['summary']['source_rate_pct']:.1f}%</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with kpi_col4:
+            st.markdown(f"""
+            <div style="background:#ffffff;padding:16px;border:1px solid #e2e8f0;border-radius:14px;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+                <div style="font-size:11px;font-weight:700;color:#7c3aed;text-transform:uppercase;letter-spacing:0.5px;">Số tài liệu indexed</div>
+                <div style="font-size:28px;font-weight:800;color:#7c3aed;margin-top:6px;">{snapshot['summary']['indexed_documents']:,}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
+        col_line, col_donut = st.columns([3, 2])
+        with col_line:
+            st.markdown("##### Truy vấn theo giờ trong kỳ")
+            hourly_df = snapshot["hourly_df"].copy()
+            if period_choice == "Hôm nay":
+                full_hours = pd.DataFrame({"hour": [f"{hour:02d}:00" for hour in range(24)]})
+                hourly_df = full_hours.merge(hourly_df, on="hour", how="left").fillna(0)
+            if not hourly_df.empty:
+                st.line_chart(hourly_df.set_index("hour")["count"])
+            else:
+                st.info("Không có dữ liệu truy vấn trong khoảng thời gian này.")
+        with col_donut:
+            st.markdown("##### Phân bổ theo phòng ban")
+            department_df = snapshot["department_df"]
+            if not department_df.empty:
+                st.markdown(
+                    build_donut_html(
+                        "Phân bổ truy vấn",
+                        department_df["department"].tolist(),
+                        department_df["count"].tolist(),
+                    ),
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.info("Không có dữ liệu phòng ban khớp bộ lọc.")
+
+        st.markdown("<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True)
+        st.markdown("##### Top 10 câu hỏi phổ biến (7 ngày qua)")
+        if seven_day_question_df.empty:
+            st.info("Chưa có dữ liệu câu hỏi trong kỳ này.")
+        else:
+            st.dataframe(seven_day_question_df, use_container_width=True, hide_index=True)
+
+        st.markdown("<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True)
+        st.markdown("##### Trạng thái tài nguyên realtime")
+        ram_value = resource_status["ram_usage"]
+        vram_value = resource_status["vram_usage"]
+        queue_size = resource_status["queue_size"]
+        queue_max = resource_status["queue_max"]
+        resource_col1, resource_col2, resource_col3 = st.columns(3)
+        with resource_col1:
+            st.markdown((f"<div style='background:#ffffff;padding:16px;border:1px solid #e2e8f0;border-radius:14px;'><div style='font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;'>RAM usage</div><div style='font-size:26px;font-weight:800;color:#0f172a;margin-top:6px;'>{ram_value:.0f}%</div></div>" if ram_value is not None else "<div style='background:#ffffff;padding:16px;border:1px solid #e2e8f0;border-radius:14px;'><div style='font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;'>RAM usage</div><div style='font-size:26px;font-weight:800;color:#0f172a;margin-top:6px;'>N/A</div></div>"), unsafe_allow_html=True)
+        with resource_col2:
+            st.markdown((f"<div style='background:#ffffff;padding:16px;border:1px solid #e2e8f0;border-radius:14px;'><div style='font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;'>VRAM usage</div><div style='font-size:26px;font-weight:800;color:#0f172a;margin-top:6px;'>{vram_value:.0f}%</div></div>" if vram_value is not None else "<div style='background:#ffffff;padding:16px;border:1px solid #e2e8f0;border-radius:14px;'><div style='font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;'>VRAM usage</div><div style='font-size:26px;font-weight:800;color:#0f172a;margin-top:6px;'>N/A</div></div>"), unsafe_allow_html=True)
+        with resource_col3:
+            st.markdown(f"<div style='background:#ffffff;padding:16px;border:1px solid #e2e8f0;border-radius:14px;'><div style='font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;'>Queue size</div><div style='font-size:26px;font-weight:800;color:#0f172a;margin-top:6px;'>{queue_size}/{queue_max}</div></div>", unsafe_allow_html=True)
+
+        backup_at = resource_status.get("last_backup_at")
+        if backup_at:
+            st.caption(f"Sao lưu gần nhất: {backup_at.astimezone(timezone.utc).strftime('%H:%M:%S %d/%m/%Y UTC')}")
+        else:
+            st.caption("Sao lưu gần nhất: chưa có dữ liệu")
+
+        st.markdown("<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True)
+        st.markdown("##### Xuất báo cáo")
+        export_title = f"AI Dashboard - {period_display}"
+        export_col1, export_col2 = st.columns(2)
+        with export_col1:
+            try:
+                excel_bytes = build_excel_bytes(snapshot)
+                st.download_button(
+                    "Tải Excel",
+                    data=excel_bytes,
+                    file_name=f"ai_dashboard_{period_choice.lower().replace(' ', '_')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
+            except Exception as exc:
+                st.warning(f"Không xuất được Excel: {exc}")
+        with export_col2:
+            try:
+                pdf_bytes = build_pdf_bytes(export_title, snapshot)
+                st.download_button(
+                    "Tải PDF",
+                    data=pdf_bytes,
+                    file_name=f"ai_dashboard_{period_choice.lower().replace(' ', '_')}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+            except Exception as exc:
+                st.warning(f"Không xuất được PDF: {exc}")
+
+    # ── TAB 5: AI USAGE REPORT ─────────────────────────────────────────────────
+    elif st.session_state.navigation == "AI Report":
+        if st.session_state.auth_user_role not in {"Admin", "Manager"}:
+            st.error("Bạn không có quyền truy cập trang này.")
+            return
+
+        st.markdown('<h2 style="font-weight: 700; font-size: 24px; color: #0f172a; margin-top: 10px;">📈 Báo cáo thống kê tình hình sử dụng AI</h2>', unsafe_allow_html=True)
+        st.markdown('<p style="color: #64748b; font-size: 13px; margin-top: -12px;">Tổng hợp query, phòng ban, người dùng, tài liệu phổ biến và phân bố latency.</p>', unsafe_allow_html=True)
+        st.markdown("---")
+        st.components.v1.html("<meta http-equiv='refresh' content='20'>", height=0)
+
+        dept_labels = {
+            "all": "Tất cả phòng ban",
+            "general": "General",
+            "finance": "Finance",
+            "hr": "HR",
+            "it": "IT",
+            "legal": "Legal",
+            "security": "Security",
+        }
+
+        period_label_map = {
+            "Hôm nay": "today",
+            "7 ngày": "7d",
+            "30 ngày": "30d",
+            "Tùy chỉnh": "custom",
+        }
+        period_choice = st.radio("Khoảng thời gian", list(period_label_map.keys()), horizontal=True, key="report_period_choice")
+
+        custom_start = None
+        custom_end = None
+        if period_choice == "Tùy chỉnh":
+            col_start, col_end = st.columns(2)
+            with col_start:
+                custom_start = st.date_input("Từ ngày", value=datetime.date.today() - datetime.timedelta(days=7), key="report_start")
+            with col_end:
+                custom_end = st.date_input("Đến ngày", value=datetime.date.today(), key="report_end")
+
+        if st.session_state.auth_user_role == "Manager":
+            selected_department = st.session_state.auth_department
+            st.info(f"Báo cáo đang cố định theo phòng ban của bạn: {selected_department}")
+        else:
+            selected_department = st.selectbox(
+                "Phòng ban",
+                ["all", "general", "finance", "hr", "it", "legal", "security"],
+                format_func=lambda value: dept_labels.get(value, value),
+                key="report_department",
+            )
+
+        try:
+            start_dt, end_dt, period_display = normalize_period(
+                period_label_map[period_choice],
+                custom_start=custom_start,
+                custom_end=custom_end,
+            )
+        except ValueError as exc:
+            st.error(str(exc))
+            return
+
+        try:
+            question_logs = fetch_audit_logs_in_range(
+                store,
+                start=start_dt,
+                end=end_dt,
+                event_type="question_allowed",
+            )
+        except Exception as exc:
+            st.error(f"Không thể đọc query log: {exc}")
+            return
+
+        try:
+            indexed_documents = rag.get_stats().get("vector_store", {}).get("count", 0)
+        except Exception:
+            indexed_documents = 0
+
+        is_admin = st.session_state.auth_user_role == "Admin"
+        snapshot = build_activity_snapshot(
+            question_logs,
+            selected_department=selected_department,
+            indexed_documents=indexed_documents,
+            include_user_breakdown=is_admin,
+        )
+
+        report_col1, report_col2, report_col3, report_col4 = st.columns(4)
+        with report_col1:
+            st.metric(f"Tổng query ({period_display})", f"{snapshot['summary']['total_queries']:,}")
+        with report_col2:
+            st.metric("Query thành công", f"{snapshot['summary']['successful_queries']:,}")
+        with report_col3:
+            st.metric("Query không tìm thấy", f"{snapshot['summary']['no_source_queries']:,}")
+        with report_col4:
+            st.metric("Avg latency", f"{snapshot['summary']['avg_latency_ms']:.1f} ms")
+
+        st.markdown("<div style='margin-bottom: 18px;'></div>", unsafe_allow_html=True)
+        report_left, report_right = st.columns([2, 1])
+        with report_left:
+            st.markdown("##### Báo cáo theo phòng ban")
+            if snapshot["department_df"].empty:
+                st.info("Không có dữ liệu phòng ban khớp bộ lọc.")
+            else:
+                st.bar_chart(snapshot["department_df"].set_index("department")["count"])
+        with report_right:
+            st.markdown("##### Top tài liệu được truy cập")
+            if snapshot["document_df"].empty:
+                st.info("Chưa có dữ liệu tài liệu.")
+            else:
+                st.dataframe(snapshot["document_df"], use_container_width=True, hide_index=True)
+
+        st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
+        col_hist, col_users = st.columns([2, 1])
+        with col_hist:
+            st.markdown("##### Latency distribution")
+            if snapshot["latency_df"].empty:
+                st.info("Chưa có dữ liệu latency.")
+            else:
+                st.bar_chart(snapshot["latency_df"].set_index("bucket")["count"])
+        with col_users:
+            st.markdown("##### Top 10 user sử dụng nhiều nhất")
+            if not is_admin:
+                st.info("Báo cáo theo người dùng chỉ dành cho Admin.")
+            elif snapshot["user_df"].empty:
+                st.info("Chưa có dữ liệu user.")
+            else:
+                st.dataframe(snapshot["user_df"], use_container_width=True, hide_index=True)
+
+        st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
+        st.markdown("##### Top 10 câu hỏi phổ biến")
+        if snapshot["question_df"].empty:
+            st.info("Chưa có dữ liệu câu hỏi.")
+        else:
+            st.dataframe(snapshot["question_df"], use_container_width=True, hide_index=True)
+
+        st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
+        st.markdown("##### Xuất báo cáo")
+        report_title = f"AI Usage Report - {period_display}"
+        export_col1, export_col2 = st.columns(2)
+        with export_col1:
+            try:
+                excel_bytes = build_excel_bytes(snapshot)
+                st.download_button(
+                    "Tải Excel",
+                    data=excel_bytes,
+                    file_name=f"ai_usage_report_{period_choice.lower().replace(' ', '_')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
+            except Exception as exc:
+                st.warning(f"Không xuất được Excel: {exc}")
+        with export_col2:
+            try:
+                pdf_bytes = build_pdf_bytes(report_title, snapshot)
+                st.download_button(
+                    "Tải PDF",
+                    data=pdf_bytes,
+                    file_name=f"ai_usage_report_{period_choice.lower().replace(' ', '_')}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+            except Exception as exc:
+                st.warning(f"Không xuất được PDF: {exc}")
+
+    # ── TAB 5: RBAC ADMIN ─────────────────────────────────────────────────────
+    elif st.session_state.navigation == "RBAC Admin":
+        if st.session_state.auth_user_role != "Admin":
+            st.error("Bạn không có quyền truy cập trang này.")
+            return
+
+        render_rbac_admin_page(store)
+
+    # ── TAB 6: SYSTEM AUDIT LOGS (Nhật ký hệ thống) ─────────────────────────────
     elif st.session_state.navigation == "Audit Log":
         if st.session_state.auth_user_role != "Admin":
             st.error("Bạn không có quyền truy cập trang này.")
