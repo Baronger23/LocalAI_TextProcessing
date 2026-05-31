@@ -1043,7 +1043,55 @@ class VectorStoreManager:
         """Add documents to the vector store."""
         if self.backend == "postgres":
             return self._postgres_add_documents(documents)
-        return self.vector_store.add_documents(documents)
+
+        # Chroma backend: store vectors in Chroma but also register a lightweight
+        # document row in Postgres so the system can track metadata like department/group.
+        ids = self.vector_store.add_documents(documents)
+        try:
+            # best-effort: register document-level metadata in Postgres
+            self._register_documents_in_postgres(documents)
+        except Exception as exc:
+            logger.warning("Failed to register documents in Postgres: %s", exc)
+        return ids
+
+    def _register_documents_in_postgres(self, documents: List[Document]) -> None:
+        """Ensure a documents row exists in Postgres for each source when using Chroma.
+
+        This is a best-effort operation: it upserts minimal document metadata
+        (source_key, file_name, file_path, metadata, uploaded_by) so the admin
+        UI can show which group/department a document belongs to even when the
+        embeddings are stored in Chroma.
+        """
+        try:
+            with self._get_postgres_connection() as conn:
+                for document in documents:
+                    metadata = dict(document.metadata or {})
+                    source_document = self._get_source_document(metadata, document.page_content)
+                    uploaded_by = metadata.get('uploaded_by')
+                    conn.execute(
+                        f"""
+                        INSERT INTO {self.postgres_schema}.documents
+                            (source_key, file_name, file_path, metadata, uploaded_by, embedding_status)
+                        VALUES (%s, %s, %s, %s::jsonb, %s, 'done')
+                        ON CONFLICT (source_key)
+                        DO UPDATE SET
+                            file_name = EXCLUDED.file_name,
+                            file_path = EXCLUDED.file_path,
+                            metadata = {self.postgres_schema}.documents.metadata || EXCLUDED.metadata,
+                            uploaded_by = COALESCE(EXCLUDED.uploaded_by, {self.postgres_schema}.documents.uploaded_by),
+                            updated_at = NOW()
+                        """,
+                        (
+                            source_document['source_key'],
+                            source_document['file_name'],
+                            source_document['file_path'],
+                            json.dumps(source_document['metadata']),
+                            uploaded_by,
+                        ),
+                    )
+        except Exception:
+            # Don't raise — this must be non-blocking for ingestion to succeed
+            logger.exception("Error registering documents in Postgres")
 
     def similarity_search(
         self,
@@ -1139,7 +1187,7 @@ class VectorStoreManager:
         try:
             collection = self.vector_store._collection
             # Reconstruct expected list from Chroma
-            data = collection.get(include=['metadatas', 'ids', 'documents'])
+            data = collection.get(include=['metadatas', 'documents'])
             metadatas = data.get('metadatas') or []
             ids = data.get('ids') or []
             docs_text = data.get('documents') or []
@@ -1198,7 +1246,7 @@ class VectorStoreManager:
         # Chroma backend: fetch documents by id from the Chroma collection
         try:
             collection = self.vector_store._collection
-            resp = collection.get(ids=[document_id], include=['metadatas', 'documents', 'ids'])
+            resp = collection.get(ids=[document_id], include=['metadatas', 'documents'])
             if not resp or not resp.get('ids'):
                 return []
             metadatas = resp.get('metadatas', [{}])

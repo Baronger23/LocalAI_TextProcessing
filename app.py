@@ -479,6 +479,23 @@ def init_chat_store():
     return ChatStore()
 
 
+class LazyStoreProxy:
+    """Proxy to lazily initialize ChatStore only on first use.
+
+    This avoids running DB schema migrations at Streamlit startup.
+    """
+    def __init__(self):
+        self._real: ChatStore | None = None
+
+    def _ensure(self):
+        if self._real is None:
+            self._real = init_chat_store()
+
+    def __getattr__(self, item):
+        self._ensure()
+        return getattr(self._real, item)
+
+
 def build_system_prompt_with_summary(summary: str) -> str:
     """Build response instruction with persistent rolling summary context."""
     base_prompt = (
@@ -740,7 +757,9 @@ def generate_doc_summary(rag: RAGPipeline, doc_name: str, full_text: str) -> dic
 
 
 def main():
-    store = init_chat_store()
+    # Avoid heavy DB work at startup: use a lazy proxy so ChatStore is
+    # created only when first accessed (e.g., on login or first chat action).
+    store = LazyStoreProxy()
     rag = init_rag()
 
     # Initialize session state variables
