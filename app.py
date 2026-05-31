@@ -926,6 +926,7 @@ def main():
         # Navigation vertical tabs (simulated via custom styled radio)
         nav_options = {
             "💬 Trợ lý hỏi đáp": "Chat",
+            "📂 Thư viện tài liệu": "Library",
             "📄 Chi tiết tài liệu": "Document Details"
         }
         if st.session_state.auth_user_role == "Admin":
@@ -1520,8 +1521,8 @@ def main():
         # Header bar
         col_back, col_title = st.columns([1, 8])
         with col_back:
-            if st.button("◀ Trợ lý", use_container_width=True):
-                st.session_state.navigation = "Chat"
+            if st.button("◀ Thư viện", use_container_width=True):
+                st.session_state.navigation = "Library"
                 st.rerun()
         with col_title:
             st.markdown(f'<h3 style="font-weight: 700; font-size: 20px; color: #0f172a; margin-top: 2px;">{doc_name}</h3>', unsafe_allow_html=True)

@@ -366,14 +366,17 @@ def _render_audit_section(store: ChatStore) -> None:
 
     export_col1, export_col2 = st.columns(2)
     with export_col1:
-        if st.download_button(
-            "Xuất Excel",
-            data=_audit_export_excel(enriched_logs),
-            file_name="audit_log.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        ):
-            pass
+        try:
+            excel_bytes = _audit_export_excel(enriched_logs)
+            st.download_button(
+                "Xuất Excel",
+                data=excel_bytes,
+                file_name="audit_log.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+        except Exception as exc:
+            st.warning(f"Không xuất được Excel: {exc}")
     with export_col2:
         try:
             pdf_bytes = _audit_export_pdf("Audit Log", enriched_logs)
