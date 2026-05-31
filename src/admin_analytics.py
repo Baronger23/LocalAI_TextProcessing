@@ -23,6 +23,8 @@ try:
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.styles import getSampleStyleSheet
     from reportlab.lib.units import cm
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
     from reportlab.platypus import (
         PageBreak,
         Paragraph,
@@ -34,6 +36,7 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     colors = None
     A4 = landscape = getSampleStyleSheet = cm = None  # type: ignore[assignment]
+    pdfmetrics = TTFont = None  # type: ignore[assignment]
     PageBreak = Paragraph = SimpleDocTemplate = Spacer = Table = TableStyle = None  # type: ignore[assignment]
 
 
@@ -47,6 +50,41 @@ DEFAULT_DASHBOARD_COLORS = [
     "#0ea5e9",
     "#84cc16",
 ]
+
+
+def _register_pdf_fonts() -> tuple[str, str]:
+    if pdfmetrics is None or TTFont is None:
+        return "Helvetica", "Helvetica-Bold"
+
+    normal_name = "AppUnicode"
+    bold_name = "AppUnicode-Bold"
+    font_pairs = [
+        ("C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/arialbd.ttf"),
+        ("C:/Windows/Fonts/ARIALUNI.ttf", "C:/Windows/Fonts/arialbd.ttf"),
+        ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+    ]
+
+    for normal_path, bold_path in font_pairs:
+        if Path(normal_path).exists():
+            try:
+                pdfmetrics.registerFont(TTFont(normal_name, normal_path))
+                if Path(bold_path).exists():
+                    pdfmetrics.registerFont(TTFont(bold_name, bold_path))
+                else:
+                    bold_name = normal_name
+                return normal_name, bold_name
+            except Exception:
+                continue
+    return "Helvetica", "Helvetica-Bold"
+
+
+def _apply_pdf_font_styles(styles: Any, font_name: str, bold_font_name: str) -> None:
+    for style_name in ("Normal", "BodyText"):
+        if style_name in styles:
+            styles[style_name].fontName = font_name
+    for style_name in ("Title", "Heading1", "Heading2", "Heading3"):
+        if style_name in styles:
+            styles[style_name].fontName = bold_font_name
 
 
 def normalize_period(
@@ -628,6 +666,8 @@ def build_pdf_bytes(title: str, snapshot: dict[str, Any]) -> bytes:
         bottomMargin=1.1 * cm,
     )
     styles = getSampleStyleSheet()
+    font_name, bold_font_name = _register_pdf_fonts()
+    _apply_pdf_font_styles(styles, font_name, bold_font_name)
     story: list[Any] = []
 
     story.append(Paragraph(html.escape(title), styles["Title"]))
@@ -643,7 +683,17 @@ def build_pdf_bytes(title: str, snapshot: dict[str, Any]) -> bytes:
         ("Số tài liệu indexed", snapshot["summary"]["indexed_documents"]),
     ]:
         summary_rows.append([metric, str(value)])
-    story.append(Table(summary_rows, colWidths=[8 * cm, 6 * cm]))
+    summary_table = Table(summary_rows, colWidths=[8 * cm, 6 * cm])
+    summary_table.setStyle(
+        TableStyle(
+            [
+                ("FONTNAME", (0, 0), (-1, -1), font_name),
+                ("FONTNAME", (0, 0), (-1, 0), bold_font_name),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]
+        )
+    )
+    story.append(summary_table)
     story.append(Spacer(1, 0.4 * cm))
 
     for sheet_title, frame in [
@@ -659,7 +709,17 @@ def build_pdf_bytes(title: str, snapshot: dict[str, Any]) -> bytes:
             story.append(Paragraph("Không có dữ liệu.", styles["BodyText"]))
         else:
             rows = [list(frame.columns)] + frame.astype(str).values.tolist()
-            story.append(Table(rows, repeatRows=1))
+            table = Table(rows, repeatRows=1)
+            table.setStyle(
+                TableStyle(
+                    [
+                        ("FONTNAME", (0, 0), (-1, -1), font_name),
+                        ("FONTNAME", (0, 0), (-1, 0), bold_font_name),
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ]
+                )
+            )
+            story.append(table)
         story.append(Spacer(1, 0.35 * cm))
 
     document.build(story)

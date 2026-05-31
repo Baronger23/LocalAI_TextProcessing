@@ -7,6 +7,7 @@ import html
 import io
 import json
 from typing import Any
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -16,10 +17,13 @@ try:
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.styles import getSampleStyleSheet
     from reportlab.lib.units import cm
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 except Exception:  # pragma: no cover - optional dependency
     colors = None
     A4 = landscape = getSampleStyleSheet = cm = None  # type: ignore[assignment]
+    pdfmetrics = TTFont = None  # type: ignore[assignment]
     Paragraph = SimpleDocTemplate = Spacer = Table = TableStyle = None  # type: ignore[assignment]
 
 from src.config import POSTGRES_CONNECTION_STRING
@@ -28,6 +32,41 @@ from src.storage import ChatStore
 ROLE_OPTIONS = ["Admin", "HR", "Finance", "Legal", "Viewer", "Employee"]
 DEPARTMENT_OPTIONS = ["general", "finance", "hr", "it", "legal", "security"]
 SEVERITY_OPTIONS = ["Info", "Warning", "Critical"]
+
+
+def _register_pdf_fonts() -> tuple[str, str]:
+    if pdfmetrics is None or TTFont is None:
+        return "Helvetica", "Helvetica-Bold"
+
+    normal_name = "AppUnicode"
+    bold_name = "AppUnicode-Bold"
+    font_pairs = [
+        ("C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/arialbd.ttf"),
+        ("C:/Windows/Fonts/ARIALUNI.ttf", "C:/Windows/Fonts/arialbd.ttf"),
+        ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+    ]
+
+    for normal_path, bold_path in font_pairs:
+        if Path(normal_path).exists():
+            try:
+                pdfmetrics.registerFont(TTFont(normal_name, normal_path))
+                if Path(bold_path).exists():
+                    pdfmetrics.registerFont(TTFont(bold_name, bold_path))
+                else:
+                    bold_name = normal_name
+                return normal_name, bold_name
+            except Exception:
+                continue
+    return "Helvetica", "Helvetica-Bold"
+
+
+def _apply_pdf_font_styles(styles: Any, font_name: str, bold_font_name: str) -> None:
+    for style_name in ("Normal", "BodyText"):
+        if style_name in styles:
+            styles[style_name].fontName = font_name
+    for style_name in ("Title", "Heading1", "Heading2", "Heading3"):
+        if style_name in styles:
+            styles[style_name].fontName = bold_font_name
 
 
 def _severity_for_event(event: str) -> str:
@@ -73,6 +112,8 @@ def _audit_export_pdf(title: str, logs: list[dict[str, Any]]) -> bytes:
         bottomMargin=1.1 * cm,
     )
     styles = getSampleStyleSheet()
+    font_name, bold_font_name = _register_pdf_fonts()
+    _apply_pdf_font_styles(styles, font_name, bold_font_name)
     story: list[Any] = [Paragraph(html.escape(title), styles["Title"]), Spacer(1, 0.35 * cm)]
 
     if not logs:
@@ -101,6 +142,8 @@ def _audit_export_pdf(title: str, logs: list[dict[str, Any]]) -> bytes:
                 [
                     ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f8fafc")),
                     ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#334155")),
+                    ("FONTNAME", (0, 0), (-1, -1), font_name),
+                    ("FONTNAME", (0, 0), (-1, 0), bold_font_name),
                     ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#cbd5e1")),
                     ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ]
