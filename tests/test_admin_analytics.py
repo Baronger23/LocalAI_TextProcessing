@@ -81,6 +81,21 @@ def test_build_activity_snapshot_aggregates_key_metrics(sample_logs):
     assert not snapshot["user_df"].empty
 
 
+def test_build_activity_snapshot_keeps_empty_dataframe_columns():
+    snapshot = analytics.build_activity_snapshot(
+        [],
+        selected_department="all",
+        indexed_documents=0,
+        include_user_breakdown=True,
+    )
+
+    assert list(snapshot["hourly_df"].columns) == ["hour", "count"]
+    assert list(snapshot["department_df"].columns) == ["department", "count"]
+    assert list(snapshot["question_df"].columns) == ["question", "count"]
+    assert list(snapshot["document_df"].columns) == ["document", "count"]
+    assert list(snapshot["user_df"].columns) == ["user", "count"]
+
+
 def test_build_resource_status_flags_stale_backup(monkeypatch, tmp_path):
     monkeypatch.setattr(analytics, "get_system_ram_usage_percent", lambda: 74.0)
     monkeypatch.setattr(analytics, "get_vram_usage_percent", lambda: 88.0)

@@ -13,8 +13,8 @@ import streamlit as st
 
 try:
     from reportlab.lib import colors
+    from reportlab.lib import styles as reportlab_styles
     from reportlab.lib.pagesizes import A4, landscape
-    from reportlab.lib.styles import getSampleStyleSheet
     from reportlab.lib.units import cm
     from reportlab.platypus import (
         Paragraph,
@@ -25,7 +25,7 @@ try:
     )
 except Exception:  # pragma: no cover - optional dependency
     colors = None
-    A4 = landscape = getSampleStyleSheet = cm = None  # type: ignore[assignment]
+    A4 = landscape = reportlab_styles = cm = None  # type: ignore[assignment]
     Paragraph = SimpleDocTemplate = Spacer = Table = TableStyle = None  # type: ignore[assignment]
 
 from src.config import POSTGRES_CONNECTION_STRING
@@ -45,11 +45,30 @@ def _severity_for_event(event: str) -> str:
     return "Info"
 
 
+def _excel_safe_value(value: Any) -> Any:
+    if isinstance(value, pd.Timestamp):
+        if value.tzinfo is not None:
+            return value.tz_convert("UTC").tz_localize(None)
+        return value
+    if isinstance(value, dt.datetime):
+        if value.tzinfo is not None:
+            return value.astimezone(dt.timezone.utc).replace(tzinfo=None)
+        return value
+    return value
+
+
+def _excel_safe_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    return frame.map(_excel_safe_value)
+
+
 def _audit_export_excel(logs: list[dict[str, Any]]) -> bytes:
     buffer = io.BytesIO()
     frame = pd.DataFrame(logs)
     if frame.empty:
         frame = pd.DataFrame([{"message": "Không có dữ liệu"}])
+    frame = _excel_safe_frame(frame)
     excel_engine = None
     for candidate in ("openpyxl", "xlsxwriter"):
         try:
@@ -78,7 +97,7 @@ def _audit_export_pdf(title: str, logs: list[dict[str, Any]]) -> bytes:
         topMargin=1.1 * cm,
         bottomMargin=1.1 * cm,
     )
-    styles = getSampleStyleSheet()
+    styles = reportlab_styles.getSampleStyleSheet()
     story: list[Any] = [Paragraph(html.escape(title), styles["Title"]), Spacer(1, 0.35 * cm)]
 
     if not logs:
@@ -185,7 +204,6 @@ def _render_group_section(store: ChatStore) -> None:
             st.error(str(exc))
 
         member_users = store.list_users(query=None)
-        member_map = {group_user["id"]: group_user for group_user in member_users}
         current_members = [user for user in member_users if selected_group["name"] in (user.get("groups") or [])]
         st.markdown("##### Thành viên nhóm")
         if current_members:

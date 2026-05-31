@@ -20,8 +20,8 @@ import pandas as pd
 
 try:
     from reportlab.lib import colors
+    from reportlab.lib import styles as reportlab_styles
     from reportlab.lib.pagesizes import A4, landscape
-    from reportlab.lib.styles import getSampleStyleSheet
     from reportlab.lib.units import cm
     from reportlab.platypus import (
         PageBreak,
@@ -33,7 +33,7 @@ try:
     )
 except Exception:  # pragma: no cover - optional dependency
     colors = None
-    A4 = landscape = getSampleStyleSheet = cm = None  # type: ignore[assignment]
+    A4 = landscape = reportlab_styles = cm = None  # type: ignore[assignment]
     PageBreak = Paragraph = SimpleDocTemplate = Spacer = Table = TableStyle = None  # type: ignore[assignment]
 
 
@@ -317,12 +317,12 @@ def build_activity_snapshot(
 
     result: dict[str, Any] = {
         "summary": summary,
-        "hourly_df": pd.DataFrame(hourly_rows),
-        "department_df": pd.DataFrame(department_rows),
-        "question_df": pd.DataFrame(question_rows),
-        "document_df": pd.DataFrame(document_rows),
+        "hourly_df": pd.DataFrame(hourly_rows, columns=["hour", "count"]),
+        "department_df": pd.DataFrame(department_rows, columns=["department", "count"]),
+        "question_df": pd.DataFrame(question_rows, columns=["question", "count"]),
+        "document_df": pd.DataFrame(document_rows, columns=["document", "count"]),
         "latency_df": latency_bins,
-        "user_df": pd.DataFrame(user_rows),
+        "user_df": pd.DataFrame(user_rows, columns=["user", "count"]),
         "raw_logs": question_logs,
         "selected_department": normalized_department,
         "period_start": start_hour,
@@ -330,9 +330,9 @@ def build_activity_snapshot(
     }
 
     if include_user_breakdown:
-        result["user_df"] = pd.DataFrame(user_rows)
+        result["user_df"] = pd.DataFrame(user_rows, columns=["user", "count"])
     else:
-        result["user_df"] = pd.DataFrame(user_rows[:0])
+        result["user_df"] = pd.DataFrame(columns=["user", "count"])
 
     return result
 
@@ -627,7 +627,7 @@ def build_pdf_bytes(title: str, snapshot: dict[str, Any]) -> bytes:
         topMargin=1.1 * cm,
         bottomMargin=1.1 * cm,
     )
-    styles = getSampleStyleSheet()
+    styles = reportlab_styles.getSampleStyleSheet()
     story: list[Any] = []
 
     story.append(Paragraph(html.escape(title), styles["Title"]))

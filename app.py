@@ -1753,6 +1753,8 @@ def main():
         with col_line:
             st.markdown("##### Truy vấn theo giờ trong kỳ")
             hourly_df = snapshot["hourly_df"].copy()
+            if "hour" not in hourly_df.columns or "count" not in hourly_df.columns:
+                hourly_df = pd.DataFrame(columns=["hour", "count"])
             if period_choice == "Hôm nay":
                 full_hours = pd.DataFrame({"hour": [f"{hour:02d}:00" for hour in range(24)]})
                 hourly_df = full_hours.merge(hourly_df, on="hour", how="left").fillna(0)
