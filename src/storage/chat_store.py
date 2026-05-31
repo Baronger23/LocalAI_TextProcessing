@@ -508,7 +508,7 @@ class ChatStore:
         self,
         limit: int = 50,
         offset: int = 0,
-        event_type: Optional[str] = None,
+        event_type: Optional[str | list[str]] = None,
         email_query: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
@@ -518,8 +518,13 @@ class ChatStore:
         params = []
 
         if event_type:
-            conditions.append("a.event = %s")
-            params.append(event_type)
+            if isinstance(event_type, list):
+                placeholders = ", ".join(["%s"] * len(event_type))
+                conditions.append(f"a.event IN ({placeholders})")
+                params.extend(event_type)
+            else:
+                conditions.append("a.event = %s")
+                params.append(event_type)
 
         if email_query:
             conditions.append("u.email ILIKE %s")

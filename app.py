@@ -7,6 +7,8 @@ from pathlib import Path
 import sys
 import time
 import json
+import datetime
+from datetime import timezone
 
 # Configure root logger so pipeline debug messages appear in the terminal.
 logging.basicConfig(
@@ -868,6 +870,8 @@ def main():
             "📂 Thư viện tài liệu": "Library",
             "📄 Chi tiết tài liệu": "Document Details"
         }
+        if st.session_state.auth_user_role == "Admin":
+            nav_options["🛡️ Nhật ký hệ thống"] = "Audit Log"
         
         current_index = 0
         if st.session_state.navigation in nav_options.values():
@@ -1347,8 +1351,6 @@ def main():
                     continue
 
                 if time_filter != "Tất cả":
-                    import datetime
-                    from datetime import timezone
                     delta = datetime.datetime.now(timezone.utc) - doc["created_at"]
                     if time_filter == "30 ngày qua" and delta.days > 30:
                         continue
@@ -1508,6 +1510,271 @@ def main():
                         {result['answer']}
                     </div>
                     """, unsafe_allow_html=True)
+
+    # ── TAB 4: SYSTEM AUDIT LOGS (Nhật ký hệ thống) ─────────────────────────────
+    elif st.session_state.navigation == "Audit Log":
+        if st.session_state.auth_user_role != "Admin":
+            st.error("Bạn không có quyền truy cập trang này.")
+            return
+
+        st.markdown('<h2 style="font-weight: 700; font-size: 24px; color: #0f172a; margin-top: 10px;">🛡️ Nhật ký hệ thống (Audit Log)</h2>', unsafe_allow_html=True)
+        st.markdown('<p style="color: #64748b; font-size: 13px; margin-top: -12px;">Giám sát các hoạt động bảo mật, xác thực tài khoản và hỏi đáp tài liệu.</p>', unsafe_allow_html=True)
+        st.markdown("---")
+
+        # 1. Fetch KPI Statistics
+        def _get_kpi_counts(conn):
+            total = conn.execute("SELECT COUNT(*) as cnt FROM audit_logs").fetchone()["cnt"]
+            logins = conn.execute("SELECT COUNT(*) as cnt FROM audit_logs WHERE event = 'login'").fetchone()["cnt"]
+            warnings = conn.execute("SELECT COUNT(*) as cnt FROM audit_logs WHERE event IN ('conversation_access_denied', 'message_write_denied')").fetchone()["cnt"]
+            return total, logins, warnings
+
+        try:
+            kpi_total, kpi_logins, kpi_warnings = store._run_with_retry(_get_kpi_counts)
+        except Exception:
+            kpi_total, kpi_logins, kpi_warnings = 0, 0, 0
+
+        # KPI Layout
+        col_kpi1, col_kpi2, col_kpi3 = st.columns(3)
+        with col_kpi1:
+            st.markdown(f"""
+            <div style="background-color: #ffffff; padding: 16px; border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.02);">
+                <div style="font-size: 11px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">📊 Tổng số hoạt động</div>
+                <div style="font-size: 26px; font-weight: 700; color: #1e293b; margin-top: 6px;">{kpi_total:,}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with col_kpi2:
+            st.markdown(f"""
+            <div style="background-color: #ffffff; padding: 16px; border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.02);">
+                <div style="font-size: 11px; font-weight: 600; color: #10a37f; text-transform: uppercase; letter-spacing: 0.5px;">🔑 Đăng nhập thành công</div>
+                <div style="font-size: 26px; font-weight: 700; color: #10a37f; margin-top: 6px;">{kpi_logins:,}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with col_kpi3:
+            st.markdown(f"""
+            <div style="background-color: #ffffff; padding: 16px; border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.02);">
+                <div style="font-size: 11px; font-weight: 600; color: #ef4444; text-transform: uppercase; letter-spacing: 0.5px;">🚨 Cảnh báo bảo mật</div>
+                <div style="font-size: 26px; font-weight: 700; color: #ef4444; margin-top: 6px;">{kpi_warnings:,}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("<div style='margin-bottom: 24px;'></div>", unsafe_allow_html=True)
+
+        # 2. Filters card section
+        st.markdown("##### 🔍 Bộ lọc tìm kiếm")
+        col_f1, col_f2, col_f3 = st.columns(3)
+        
+        with col_f1:
+            filter_categories = {
+                "Tất cả sự kiện": None,
+                "Xác thực (Auth)": ["login", "register", "logout"],
+                "Hỏi đáp tài liệu (Q&A)": ["question_allowed"],
+                "Bảo mật / Cấm truy cập": ["conversation_access_denied", "message_write_denied"],
+                "Tải lên tài liệu (Upload)": ["document_upload"],
+                "Cuộc chat & Bộ nhớ": ["conversation_create", "conversation_delete", "message_append", "summary_upsert", "user_memory_upsert"]
+            }
+            selected_cat_label = st.selectbox("Nhóm sự kiện", list(filter_categories.keys()))
+            event_filter = filter_categories[selected_cat_label]
+
+        with col_f2:
+            email_filter = st.text_input("Tìm theo email người dùng", placeholder="ví dụ: employee@anphat.com")
+            email_filter = email_filter.strip() if email_filter.strip() else None
+
+        with col_f3:
+            use_date_filter = st.checkbox("Lọc theo thời gian", value=False)
+            start_date_str, end_date_str = None, None
+            if use_date_filter:
+                col_date1, col_date2 = st.columns(2)
+                with col_date1:
+                    start_date_val = st.date_input("Từ ngày")
+                with col_date2:
+                    end_date_val = st.date_input("Đến ngày")
+                start_date_str = start_date_val.isoformat()
+                end_date_str = end_date_val.isoformat()
+
+        # 3. Setup Pagination State
+        if "audit_page" not in st.session_state:
+            st.session_state.audit_page = 0
+        
+        filter_key = f"{selected_cat_label}_{email_filter}_{start_date_str}_{end_date_str}"
+        if "last_audit_filter" not in st.session_state or st.session_state.last_audit_filter != filter_key:
+            st.session_state.audit_page = 0
+            st.session_state.last_audit_filter = filter_key
+
+        limit_per_page = 20
+        offset = st.session_state.audit_page * limit_per_page
+
+        # 4. Fetch Logs from Store
+        logs, total_filtered = store.get_audit_logs(
+            limit=limit_per_page,
+            offset=offset,
+            event_type=event_filter,
+            email_query=email_filter,
+            start_date=start_date_str,
+            end_date=end_date_str
+        )
+
+        # 5. Display Premium HTML Table
+        st.markdown("""
+        <style>
+            .audit-table {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 16px 0;
+                font-size: 13px;
+                background-color: #ffffff;
+                border-radius: 8px;
+                overflow: hidden;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+                border: 1px solid #e2e8f0;
+            }
+            .audit-table th {
+                background-color: #f8fafc;
+                color: #475569;
+                text-align: left;
+                padding: 12px 16px;
+                font-weight: 600;
+                border-bottom: 1px solid #e2e8f0;
+                text-transform: uppercase;
+                font-size: 11px;
+                letter-spacing: 0.5px;
+            }
+            .audit-table td {
+                padding: 12px 16px;
+                border-bottom: 1px solid #f1f5f9;
+                color: #334155;
+            }
+            .audit-table tr:hover {
+                background-color: #f8fafc;
+            }
+            .audit-badge {
+                display: inline-block;
+                padding: 2px 8px;
+                font-size: 11px;
+                font-weight: 600;
+                border-radius: 9999px;
+                text-transform: uppercase;
+                text-align: center;
+            }
+            .badge-success { background-color: #e7f5ee; color: #10a37f; }
+            .badge-info { background-color: #e0f2fe; color: #0284c7; }
+            .badge-warning { background-color: #fef3c7; color: #d97706; }
+            .badge-danger { background-color: #fee2e2; color: #ef4444; }
+            .badge-neutral { background-color: #f1f5f9; color: #475569; }
+        </style>
+        """, unsafe_allow_html=True)
+
+        if not logs:
+            st.info("Không tìm thấy nhật ký hệ thống nào khớp với điều kiện tìm kiếm.")
+        else:
+            rows_html = []
+            for log in logs:
+                event = log["event"]
+                user_email = log["user_email"] or "Hệ thống / Ẩn danh"
+                created_at = log["created_at"].strftime("%H:%M:%S • %d/%m/%Y")
+                
+                details_str = json.dumps(log["details"])
+                details_preview = details_str[:85] + "..." if len(details_str) > 85 else details_str
+                
+                badge_class = "badge-neutral"
+                if event in ["login", "register", "logout"]:
+                    badge_class = "badge-success"
+                elif event in ["document_upload"]:
+                    badge_class = "badge-info"
+                elif event in ["conversation_access_denied", "message_write_denied"]:
+                    badge_class = "badge-danger"
+                elif event in ["question_allowed"]:
+                    badge_class = "badge-info"
+                    
+                rows_html.append(
+                    f'<tr>'
+                    f'<td><span class="audit-badge {badge_class}">{event}</span></td>'
+                    f'<td><strong>{user_email}</strong></td>'
+                    f'<td style="color: #64748b;">{created_at}</td>'
+                    f'<td style="font-family: monospace; font-size: 12px; color: #475569;">{details_preview}</td>'
+                    f'</tr>'
+                )
+                
+            table_html = (
+                '<table class="audit-table">'
+                '<thead>'
+                '<tr>'
+                '<th style="width: 25%;">Sự kiện</th>'
+                '<th style="width: 25%;">Người dùng</th>'
+                '<th style="width: 20%;">Thời gian</th>'
+                '<th style="width: 30%;">Chi tiết payload</th>'
+                '</tr>'
+                '</thead>'
+                '<tbody>'
+                f'{"".join(rows_html)}'
+                '</tbody>'
+                '</table>'
+            )
+            st.markdown(table_html, unsafe_allow_html=True)
+
+            # 6. Pagination UI
+            col_nav1, col_nav2, col_nav3 = st.columns([1, 2, 1])
+            total_pages = max(1, (total_filtered + limit_per_page - 1) // limit_per_page)
+            
+            with col_nav1:
+                if st.button("◀ Trang trước", disabled=st.session_state.audit_page == 0, use_container_width=True):
+                    st.session_state.audit_page -= 1
+                    st.rerun()
+            with col_nav2:
+                st.markdown(f"<div style='text-align: center; line-height: 38px; font-weight: 500;'>Trang {st.session_state.audit_page + 1} / {total_pages} (Tổng {total_filtered} bản ghi)</div>", unsafe_allow_html=True)
+            with col_nav3:
+                if st.button("Trang sau ▶", disabled=st.session_state.audit_page >= total_pages - 1, use_container_width=True):
+                    st.session_state.audit_page += 1
+                    st.rerun()
+
+            # 7. Interactive JSON detail view
+            st.markdown("<div style='margin-bottom: 24px;'></div>", unsafe_allow_html=True)
+            st.markdown("##### 📁 Chi tiết bản ghi (Payload JSON)")
+            st.caption("Mở rộng từng dòng để xem đầy đủ thông tin chi tiết của log kiểm toán:")
+            for log in logs:
+                event = log["event"]
+                user_email = log["user_email"] or "Hệ thống / Ẩn danh"
+                created_at = log["created_at"].strftime("%H:%M:%S • %d/%m/%Y")
+                with st.expander(f"🔍 [{event.upper()}] {user_email} tại {created_at}"):
+                    st.json(log["details"])
+
+            # 8. Export CSV Section
+            st.markdown("<div style='margin-bottom: 24px;'></div>", unsafe_allow_html=True)
+            st.markdown("##### 📥 Xuất báo cáo")
+            try:
+                # Fetch up to 5000 rows matching current filters
+                export_logs, _ = store.get_audit_logs(
+                    limit=5000,
+                    offset=0,
+                    event_type=event_filter,
+                    email_query=email_filter,
+                    start_date=start_date_str,
+                    end_date=end_date_str
+                )
+                
+                import io
+                import csv
+                csv_buffer = io.StringIO()
+                writer = csv.writer(csv_buffer)
+                writer.writerow(["ID", "Sự kiện", "Email", "Quyền", "Thời gian", "Chi tiết Payload"])
+                for log in export_logs:
+                    writer.writerow([
+                        log["id"],
+                        log["event"],
+                        log["user_email"] or "",
+                        log["user_role"] or "",
+                        log["created_at"].isoformat(),
+                        json.dumps(log["details"])
+                    ])
+                
+                st.download_button(
+                    label="Tải báo cáo CSV kiểm toán (Excel Compatible)",
+                    data=csv_buffer.getvalue().encode('utf-8-sig'),
+                    file_name=f"audit_logs_{datetime.date.today().isoformat()}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+            except Exception as e:
+                st.error(f"Lỗi khi chuẩn bị dữ liệu xuất CSV: {e}")
 
 
 if __name__ == "__main__":
